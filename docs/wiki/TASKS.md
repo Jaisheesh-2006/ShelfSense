@@ -20,8 +20,9 @@
 - ✅ api: `/healthz`, `/readyz`, `/metrics`, `/api/v1/{conversion,funnel,footfall/summary,sessions,kpis}`
 
 ## Phase 2 — Vertical slice (thin end-to-end, gate-safe)
-- ⬜ Calibrate CAM 3 entrance line in `zones.py` (currently `calibrated=False`)
-- ⬜ detector: read frames (OpenCV) → YOLO person detection → emit `detection.created`
+- ✅ **Slice 2.0** — Calibrated CAM 3 entrance line in `zones.py` (`(320,490)→(1140,415)`, inside_sign=-1)
+  + reusable `VideoFrameSource` frame reader (`services/detector/app/frames.py`) + unit tests (7 passing).
+- ⬜ **Slice 2.1** — detector: read frames (OpenCV) → YOLO person detection → emit `detection.created`
 - ⬜ tracker: ByteTrack associate → emit `track.updated` with zone mapping (entrance line-crossing)
 - ⬜ analytics: sessions → footfall + **session-based funnel** + conversion (load POS CSV → `transactions`) → persist
 - ⬜ Confirm api `/funnel` + `/metrics` show real, input-varying values once tables populated

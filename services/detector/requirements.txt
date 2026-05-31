@@ -1,0 +1,6 @@
+# Detector service dependencies.
+# Phase 2.0 (frame reading): OpenCV + NumPy.
+opencv-python-headless>=4.9
+numpy>=1.26
+# Phase 2.1 (detection) will add:
+# ultralytics>=8.2   # YOLO

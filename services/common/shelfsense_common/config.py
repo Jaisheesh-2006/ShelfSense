@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     yolo_model: str = "yolov8n.pt"
     detection_confidence: float = 0.4
     person_class_id: int = 0  # COCO 'person'
+    cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
+    detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
 
     # --- Business-rule thresholds (see BUSINESS_RULES.md) ---
     min_zone_dwell_ms: int = 2000

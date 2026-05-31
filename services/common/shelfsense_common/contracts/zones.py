@@ -33,15 +33,33 @@ class CameraRole(str, Enum):
 class EntranceLine(BaseModel):
     """A virtual line for entry/exit counting, in pixel coords (1920x1080 frame).
 
-    Crossing from the `outside` side to the inside counts as an entry. `calibrated=False` means
-    the coordinates are a placeholder pending visual calibration on a real CAM 3 frame.
+    Crossing from the outside side to the inside counts as an entry. `inside_sign` records which
+    side of the line (per `side()`) is the store interior, so the tracker can tell an entry from
+    an exit. `calibrated=False` means the coordinates are a placeholder pending visual calibration.
     """
 
     x1: float
     y1: float
     x2: float
     y2: float
+    inside_sign: int = 1
     calibrated: bool = False
+
+    def side(self, px: float, py: float) -> int:
+        """Return which side of the line a point is on: +1, -1, or 0 (on the line).
+
+        Uses the sign of the 2D cross product of the line direction and the point offset.
+        """
+        cross = (self.x2 - self.x1) * (py - self.y1) - (self.y2 - self.y1) * (px - self.x1)
+        if cross > 0:
+            return 1
+        if cross < 0:
+            return -1
+        return 0
+
+    def is_inside(self, px: float, py: float) -> bool:
+        """True if the point lies on the store-interior side of the line."""
+        return self.side(px, py) == self.inside_sign
 
 
 class CameraConfig(BaseModel):
@@ -93,8 +111,13 @@ STORE = StoreConfig(
             role=CameraRole.ENTRANCE,
             primary_zone=ZoneName.ENTRANCE,
             fps=29.97,
-            # Placeholder line across the doorway threshold — calibrate on a real frame (Phase 2).
-            entrance_line=EntranceLine(x1=480, y1=520, x2=1450, y2=520, calibrated=False),
+            # Calibrated on a real CAM 3 frame (scripts/calibrate_entrance.py): the line runs
+            # along the front edge of the retail wood floor. Crossing onto the wood (inside_sign
+            # side) = entering the shopping area. inside_sign=-1 → the upper-left (wood) side is
+            # inside. Refine in Slice 2.2 by overlaying real tracks. See GROUND_TRUTH §1.
+            entrance_line=EntranceLine(
+                x1=320, y1=490, x2=1140, y2=415, inside_sign=-1, calibrated=True
+            ),
         ),
         CameraConfig(
             camera_id="CAM4",

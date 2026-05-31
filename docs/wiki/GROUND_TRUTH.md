@@ -47,6 +47,11 @@ docs/raw/
   session counts**, not per-person linking. Documented tradeoff (see [[DECISIONS]] PD-5).
 - **Implication:** footfall = entry/exit counting on **CAM 3**. CAM 4 detections are staff.
   Reference frames saved at `docs/wiki/frames/CAM_*_{10,50,90}pct.jpg`.
+- **Entrance line (calibrated, Slice 2.0):** on CAM 3 the counting line runs along the **front
+  edge of the retail wood floor**: `(320,490) → (1140,415)`, `inside_sign=-1` (upper-left wood =
+  inside, lower-right dark threshold/mall = outside). Crossing onto the wood = entering the
+  shopping area. Defined in `shelfsense_common.contracts.zones` (`STORE`); overlay saved at
+  `docs/wiki/frames/CAM3_entrance_calibration.jpg`. **Refine in Slice 2.2** by overlaying real tracks.
 
 ## §2. Business CSV — POS sales transactions
 
