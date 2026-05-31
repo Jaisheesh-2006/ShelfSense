@@ -1,55 +1,34 @@
 # EDGE CASES
 
-> Real-world conditions the system must handle gracefully. The rubric ([[GROUND_TRUTH]] §3)
-> explicitly names **re-entry, staff movement, occlusion, group entry** in the Detection
-> bucket (30 marks) and uses edge-case handling as a tie-breaker. Add cases as discovered.
+> Real-world conditions the system must handle gracefully. [[SPEC]] §3.3 names **7 edge cases** that
+> are graded (Parts A & C) and used as a tie-breaker. Handle these well, then the secondary cases.
 
-## Rubric-named cases (prioritize — these are graded by name)
-- **Re-entry** — same person leaves and returns. Rule needed: same session within
-  `reentry_window` vs. new visit. Affects footfall & conversion. See [[BUSINESS_RULES]].
-- **Staff movement** — salespersons present all day (named in the CSV). Must not be counted as
-  customer footfall. Heuristics: persistent presence, behind-counter position, uniform.
-- **Occlusion** — people hidden by shelves/each other → missed/merged detections.
-- **Group entry** — several people entering together → must count each, not one blob.
+## The 7 spec edge cases (graded — [[SPEC]] §3.3, Parts A & C)
+1. **Group entry** (2–4 together) → count **individuals, not groups** (3 enter ⇒ 3 `ENTRY`).
+2. **Staff movement** → classify `is_staff=true` and **exclude from customer metrics** (CAM4 back
+   room + heuristic/VLM: uniform, behind-counter, persistent all-day presence).
+3. **Re-entry** → same person returning produces `REENTRY` under the **same `visitor_id`**, not a
+   new `ENTRY` (avoids re-entry inflation — a known vendor problem). Needs Re-ID.
+4. **Partial occlusion** → detection confidence must **degrade gracefully, not fail silently**;
+   keep low-confidence events but **flag** them (see confidence calibration below).
+5. **Billing queue buildup** → track `queue_depth` and emit `BILLING_QUEUE_JOIN`/`ABANDON`.
+6. **Empty store periods** (5–10 min no customers) → API must return **0 / valid JSON, never null/crash**.
+7. **Camera angle overlap** (floor overlaps entry) → **cross-camera dedup**: same person not double-counted.
 
-## Detection
-- **Occlusion** — people partially hidden by shelves/each other → missed/merged boxes.
-- **Crowding** — dense clusters → overlapping detections, NMS suppression.
-- **Lighting** — glare, shadows, low light → confidence drops.
-- **Non-customers** — staff, children, reflections, mannequins → false footfall.
-- **Partial entries** — person at the doorway who doesn't enter.
+## Confidence calibration (graded)
+Do **not** silently drop or falsely elevate low-confidence detections — emit them with their real
+`confidence` so downstream can weigh them. Define a threshold for *acting* on a detection, but
+keep the event.
 
-## Tracking
-- **ID switches** — two tracks swap identity after crossing.
-- **Track fragmentation** — one person split into multiple track IDs after occlusion.
-- **Re-entry** — same person leaves and returns → one session or two? (rule needed).
-- **Loitering / stationary people** — long static presence (staff at till).
-- **Multi-camera hand-off** — same person across overlapping/adjacent cameras.
+## Secondary cases we also handle (extras beyond the graded 7)
+- **Lighting variation** (natural/fluorescent/mixed) → confidence drops, handled by confidence calibration above.
+- **ID switch / track fragmentation** → tracker tuning + Re-ID re-associates a fragmented identity.
+- **Zone-boundary flicker** (foot point oscillates across an edge) → debounce via `min_zone_dwell` before logging a zone.
+- **Out-of-order / duplicate events** → ingest is **idempotent by `event_id`**; events ordered by `timestamp`.
+- **Replay safety** → reprocessing the same clip must not double-count — guaranteed by idempotent ingest.
+- **Stuck/never-ending session** → close it via `session_timeout`.
+- **Corrupt/empty frames** → skipped gracefully by the frame reader.
+- **Perspective distortion** → we use the **foot point** (bottom-centre), not the box centre, for zone/line tests.
 
-## Zone / spatial
-- **Boundary flicker** — position oscillates across a zone edge → noisy dwell.
-- **Zones overlap or have gaps** in the floor-plan mapping.
-- **Perspective distortion** — bbox foot-point vs. centroid for zone assignment.
-
-## Sessions / analytics
-- **Session never ends** (track stuck) → enforce `session_timeout`.
-- **Zero-footfall windows** (store closed) → must report 0, not error.
-- **Clock/ordering** — out-of-order or duplicate events from the stream → idempotency.
-- **Replay** — reprocessing footage must not double-count.
-
-## System / ops
-- **Service restart mid-stream** — recover state from stream/DB without corruption.
-- **Backpressure** — analytics slower than detector → queue growth handling.
-- **Empty / corrupt frames** in the footage.
-- **Missing business CSV** — degrade gracefully (see [[RISKS]] R-1).
-
-## Handling status
-
-| Case | Strategy | Status |
-|------|----------|--------|
-| Zero-footfall window | Return 0 explicitly | ⬜ planned |
-| Duplicate/out-of-order events | Idempotent keys + event time ordering | ⬜ planned |
-| Session never ends | `session_timeout` sweep | ⬜ planned |
-| Non-customer filtering | Confidence + zone heuristics (later) | ⬜ planned |
-
-> Definitions and thresholds referenced here live in [[BUSINESS_RULES]].
+> Definitions and thresholds live in [[BUSINESS_RULES]]; production handling (idempotency, zero-traffic,
+> graceful degradation) is in [[ARCHITECTURE]].

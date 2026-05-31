@@ -80,7 +80,12 @@ services:
     build:
       context: .
       dockerfile: services/detector/Dockerfile
-    environment: *app-env
+    environment:
+      <<: *app-env
+      CCTV_DIR: /data/cctv
+    volumes:
+      # CCTV clips are local-only (gitignored). Mounted read-only for detection.
+      - "./docs/raw/CCTV Footage/CCTV Footage:/data/cctv:ro"
     depends_on:
       redpanda:
         condition: service_healthy

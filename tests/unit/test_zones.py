@@ -1,3 +1,17 @@
+# PROMPT
+# Task:
+#   - Unit-test the calibrated CAM3 entrance-line geometry.
+# Context:
+#   - EntranceLine.side()/is_inside() classify a point as inside (wood retail floor) or outside
+#     (dark threshold/mall) from the sign of a cross-product vs inside_sign.
+# Constraints:
+#   - Read coordinates from the live STORE config (do not hardcode) so tests track re-calibration.
+# Output:
+#   - Tests: CAM3 is the calibrated entrance; wood point inside, threshold point outside; side() signed
+#     and consistent with inside_sign; a point exactly on the line returns 0.
+# CHANGES MADE:
+#   - Switched from hardcoded coordinates to the live STORE config.
+#   - Added the on-the-line (==0) boundary case.
 """Unit tests for the calibrated entrance line geometry (inside vs outside)."""
 from shelfsense_common.contracts import STORE, EntranceLine
 

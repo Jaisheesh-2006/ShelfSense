@@ -65,3 +65,29 @@
 - **Tradeoffs:** v1 funnel counts sessions per zone-camera rather than following one shopper
   end-to-end (no re-ID). Acceptable and documented; re-ID is a clear future extension.
 - All reflected in CHOICES.md at submission (ADR-0003).
+- ⚠️ **Partially superseded by ADR-0005** after reading the authoritative problem statement ([[SPEC]]).
+
+---
+
+## ADR-0005 — Re-align to the authoritative problem statement ([[SPEC]])
+- **Date:** 2026-05-31 · **Status:** Accepted (user confirmed raw/ is the final data; PDF dataset
+  description is a print mistake; all other spec sections are authoritative).
+
+What changes vs. our earlier design:
+
+| # | Topic | Before | Now (per [[SPEC]]) | Why |
+|---|-------|--------|-------------------|-----|
+| a | **Re-ID (reverses PD-5)** | Independent cameras, no re-ID | **Re-ID + cross-camera dedup REQUIRED**: `visitor_id` per visit, `REENTRY`, no double-count across overlapping cams | Explicitly required & scored (Part A) |
+| b | **Event schema** | Envelope + `detection.created`/`track.updated` (bbox) | Adopt the **prescribed flat behavioural schema** + 8 event types ([[EVENT_SCHEMA]]) as the emitted/ingested contract | Schema compliance scored; API validates against it |
+| c | **API shape** | `/api/v1/conversion,footfall…` read from DB | **`POST /events/ingest`** (idempotent/dedup) + `/stores/{id}/{metrics,funnel,heatmap,anomalies}` + `/health` ([[API_SPEC]]) | Prescribed; gate checks ingest + metrics |
+| d | **Stream (revisits PD-1)** | Redpanda broker central | **Drop the broker**: pipeline emits events to JSONL and **POSTs to `/events/ingest`** (batch; simulated real-time for the dashboard) | Spec's architecture; fewer moving parts = safer gate |
+| e | **Storage** | PostgreSQL | **Keep PostgreSQL** (supports the DB-down→503 requirement realistically); SQLite is the documented simpler alternative | Production-aware; already working |
+| f | **Zones** | Floor-plan-derived `STORE` config | Keep our config (no `store_layout.json` provided); map our 5 cams to spec roles | Data-driven intent, adapted to real data |
+| g | **Detection intelligence** | minimal | Pipeline now owns sessionization: zones, **dwell (30s)**, **billing queue/abandon**, **staff**, **groups**, **confidence calibration** | These are *emitted events* per the catalogue |
+
+- **Camera→role mapping (our 5 cams → spec's 3 roles):** Entry = CAM3 · Main floor = CAM1 + CAM2 ·
+  Billing = CAM5 · Back room (staff, excluded) = CAM4. Cross-camera dedup matters where CAM1/CAM2/CAM3 overlap.
+- **Kept from before:** Docker one-command up, FastAPI, structured logging, YOLO (PD-2 ByteTrack stands),
+  calibrated entrance line, Pydantic contracts, LLM-wiki workflow.
+- **New pending:** Re-ID approach (OSNet/torchreid embedding vs. trajectory/appearance-distance) — pick in the Re-ID slice;
+  staff detection (heuristic vs. VLM) — pick in that slice. Both must be defendable + documented in CHOICES.md.

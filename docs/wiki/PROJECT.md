@@ -1,70 +1,58 @@
 # PROJECT
 
-> Scope, goals, success criteria, assumptions, open questions. Facts come from
-> [[GROUND_TRUTH]]; this file adds interpretation, scope, and assumptions.
+> Scope, goals, success criteria, assumptions. Requirements: [[SPEC]]. Data facts: [[GROUND_TRUTH]].
+> This file adds interpretation and scope; it does not duplicate the schema/endpoints (see [[SPEC]]).
 
 ## One-liner
-
-ShelfSense converts the store's CCTV footage into retail business intelligence —
-headline metric **store conversion rate** — via an event-driven, service-separated pipeline.
+ShelfSense converts a store's CCTV footage into retail intelligence — North Star **conversion rate** —
+via a two-tier pipeline: a detection layer that emits behavioural events, and an API that ingests them
+and serves metrics.
 
 ## Problem statement
+Purplle / UpGrad Store Intelligence Challenge (2026). Start from **raw CCTV footage** + a **POS CSV**
+and build a complete, containerised system that produces meaningful, queryable store metrics. Graded
+as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on detection accuracy.
 
-UpGrad/Purplle Store Intelligence Challenge (April 2026). Start from **raw CCTV footage**
-of a Purplle store + a **POS sales CSV**, and build a complete, runnable pipeline that
-produces meaningful business metrics. Graded as an **end-to-end systems & engineering**
-problem (see the rubric in [[GROUND_TRUTH]] §3), not on detection accuracy.
-
-## Inputs (see [[GROUND_TRUTH]] for full detail)
-
-- **5 CCTV cameras**, ~2-min clips each — the visual signal for footfall, journeys, dwell, funnel.
-- **POS CSV** — Brigade_Bangalore (ST1008), 10-Apr-2026, **24 transactions** / day — the
-  conversion numerator and source of basket/department/peak-hour metrics.
+## Inputs (full detail in [[GROUND_TRUTH]])
+- **5 CCTV cameras**, ~2-min clips, 1920×1080, time-synced (~20:10) — roles: Entry=CAM3, Floor=CAM1/2,
+  Billing=CAM5, Back room (staff)=CAM4.
+- **POS CSV** — Brigade_Bangalore (ST1008), 10-Apr-2026, **24 transactions** — the conversion source.
 
 ## Target outputs
-
-- **Store conversion rate** (headline) — transactions ÷ footfall.
-- Footfall (entry/exit counts), customer sessions, customer journeys, zone engagement,
-  dwell time, conversion funnel (with drop-off), checkout activity, anomaly detection,
-  store KPIs. Definitions in [[BUSINESS_RULES]].
+- **Conversion rate** (North Star) = `converted visitors ÷ unique visitors` (POS 5-min billing-window
+  rule; staff excluded). See [[BUSINESS_RULES]].
+- Footfall (entry/exit), sessions, zone dwell/engagement, the funnel (drop-off), billing queue +
+  abandonment, heatmap, anomalies, health. Endpoints in [[API_SPEC]]; behaviours in [[EVENT_SCHEMA]].
 
 ## Goals (aligned to the rubric)
-
-- A **one-command, non-crashing, observable** end-to-end system (`docker compose up`).
-- Correct, consistent APIs — especially `/metrics` and a **session-based `/funnel`** (35-mark bucket).
-- **Structured events** flowing between services.
-- Strong **DESIGN.md** + **CHOICES.md** (generated from [[ARCHITECTURE]] + [[DECISIONS]]).
-- Honest handling of edge cases: re-entry, staff, group entry, occlusion ([[EDGE_CASES]]).
+- **One-command, non-crashing, observable** stack (`docker compose up`).
+- Correct, consistent endpoints — especially `POST /events/ingest` (idempotent) and a session-based
+  `/stores/{id}/funnel` (the 35-mark bucket).
+- **Schema-compliant behavioural events** from the detection layer.
+- Strong **DESIGN.md** + **CHOICES.md** (repo root) and prompt blocks in tests (Part D).
+- Honest handling of the 7 edge cases ([[EDGE_CASES]]); Re-ID so counting is on de-duplicated sessions.
 
 ## Non-goals
-
-- SOTA detection/tracking accuracy. "Close to actual counts" is enough.
+- SOTA detection/tracking accuracy — "close to actual counts" is enough.
 - Heavy ML experimentation. Real computation that varies with input matters more (integrity cap).
 - Unnecessary architectural complexity.
 
-## Success criteria (reviewer lens, from rubric)
-
+## Success criteria (gate + reviewer lens — [[SPEC]] §gate)
 1. `docker compose up` works with zero manual steps; nothing crashes.
-2. `/metrics` returns logically consistent values; `/funnel` shows expected drop-off.
-3. Events are structured and consistent.
-4. DESIGN.md & CHOICES.md are present and non-trivial.
-5. Outputs visibly **vary with input** (no hardcoding — avoid the 50-cap).
+2. `POST /events/ingest` accepts events (no 5xx); `GET /stores/{id}/metrics` returns valid JSON.
+3. Events are structured and schema-compliant.
+4. DESIGN.md & CHOICES.md exist, >250 words each.
+5. Outputs visibly **vary with input** (no hardcoding — avoid the 50-cap / integrity check).
 
 ## Working assumptions (challenge them; track in [[RISKS]])
-
-- **A1.** The 5 clips are concurrent views of one store; at least one shows the entrance.
-  *(Unverified — needs frame inspection; see [[STATE]] next action.)*
-- **A2.** Footfall is counted primarily from the entrance camera via line-crossing.
-- **A3.** Because video (~2 min) and CSV (full day) windows differ, conversion is demonstrated
-  on a comparable/representative basis and the mismatch is documented (see [[GROUND_TRUTH]]
-  §window-mismatch, [[DECISIONS]] PD-3). Not a naive full-day-txns ÷ 2-min-footfall divide.
-- **A4.** Staff (e.g. salespersons in the CSV) should be excluded from footfall where detectable.
+- **A1 (resolved):** the 5 clips are concurrent, time-synced views; CAM3 shows the entrance ([[GROUND_TRUTH]] §1).
+- **A2:** footfall is counted on CAM3 via entrance-line crossing (line calibrated, Slice 2.0).
+- **A3:** video (~2 min) vs CSV (full day) windows differ → conversion demonstrated on a comparable/
+  representative window, documented — not a naive full-day-txns ÷ clip-footfall divide.
+- **A4:** staff are classified (`is_staff`) and excluded; CAM4 (back room) is treated as staff space.
 
 ## Open questions
+- Conversion window semantics for the demo (the A3 trade-off — finalise when conversion lands, Slice 2.5).
+- Re-ID approach (embedding vs trajectory/appearance-distance) — decide in Slice 2.4.
 
-- Which camera is the entrance? Checkout? Do views overlap (→ cross-camera re-ID needed)?
-- Video resolution/fps/codec? (ffprobe pending — [[STATE]] blocker.)
-- Are the 5 clips time-synchronized?
-- Intended conversion window semantics for the demo (PD-3).
-
-See [[DECISIONS]] for resolved/pending decisions and [[RISKS]] for tracked unknowns.
+See [[DECISIONS]] for the decision log and [[RISKS]] for tracked unknowns.

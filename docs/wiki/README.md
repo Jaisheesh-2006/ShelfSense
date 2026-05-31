@@ -38,7 +38,12 @@ Pipeline: `CCTV → detector (YOLO) → tracker (MOT) → analytics (sessions, f
 
 ## ⛔ Never-forget facts (these drive every decision)
 
-1. **Headline metric:** conversion rate = `transactions (CSV) ÷ footfall (CCTV)`. See [[BUSINESS_RULES]].
+0. **Build to [[SPEC]]** (authoritative): the **prescribed behavioural event schema** + 8 event types
+   ([[EVENT_SCHEMA]]), the **6 API endpoints incl. `POST /events/ingest`** ([[API_SPEC]]), and **Re-ID is
+   REQUIRED** (`visitor_id`, `REENTRY`, cross-camera dedup — reversed PD-5; ADR-0005). PDF's *dataset*
+   description was a print mistake — `raw/` is the final data.
+1. **Headline metric (North Star):** conversion rate = `converted visitors ÷ unique visitors`,
+   where "converted" = in the billing zone within 5 min before a POS transaction. See [[BUSINESS_RULES]].
 2. **Raw inputs:** **5 cameras**, each a **~2-min clip**; CSV is **24 transactions** over a **full day** (12:15–21:40). The **video window ≠ CSV window** — a core ambiguity to handle, not ignore. See [[GROUND_TRUTH]].
 3. **Acceptance gate (fail any → rejected before scoring):** `docker compose up` works with **zero manual steps**; `/metrics` returns a valid response; pipeline emits **structured events**; **`DESIGN.md` + `CHOICES.md`** exist and are non-trivial; no crash. See [[GROUND_TRUTH]] §Eval.
 4. **Score weights (100):** Detection 30 · **API & Business Logic 35** · Production 20 · Thinking 15. Optimize for the API/business bucket and a runnable demo.
@@ -52,6 +57,7 @@ Pipeline: `CCTV → detector (YOLO) → tracker (MOT) → analytics (sessions, f
 
 | File | What it holds |
 |------|---------------|
+| [[SPEC]] | **Authoritative requirements** from the problem statement: prescribed event schema, the 6 API endpoints, scoring/gate, edge cases, North Star. **Build to this.** |
 | [[GROUND_TRUTH]] | Hard facts distilled from `raw/`: the 5 videos, CSV schema & aggregates, the evaluation rubric. The source-of-truth synthesis. |
 | [[STATE]] | Current build phase, what's done, the single next action. Update every session. |
 | [[PROJECT]] | Scope, goals, non-goals, success criteria, open questions. |
@@ -63,6 +69,7 @@ Pipeline: `CCTV → detector (YOLO) → tracker (MOT) → analytics (sessions, f
 | [[RISKS]] | Known risks, unknowns, mitigations. |
 | [[EDGE_CASES]] | Real-world conditions (re-entry, staff, occlusion, group entry) + handling. |
 | [[TASKS]] | Phased roadmap, ordered. |
+| [[INTERVIEW_QA]] | 5 defend-your-decisions Q&A per completed slice (for the post-submission follow-up). |
 
 ---
 

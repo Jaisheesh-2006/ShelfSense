@@ -1,82 +1,91 @@
 # ARCHITECTURE
 
-> Update whenever the architecture changes. See [[DECISIONS]] for rationale. This file is
-> the source for the graded **`DESIGN.md`** deliverable (ADR-0003) — keep it clear enough to
-> distill. Grounded in [[GROUND_TRUTH]]: **5 cameras** (entrance camera drives footfall) and a
-> **POS CSV** joined in analytics for **conversion rate**.
+> Canonical system design (current, post-ADR-0005). Source for the reviewer-facing `DESIGN.md`.
+> Authoritative requirements: [[SPEC]]. Decisions + rationale: [[DECISIONS]]. Data facts: [[GROUND_TRUTH]].
 
-## Guiding principles
+## Design goal
+Every component serves one number — the **North Star: conversion rate** (`converted visitors ÷
+unique visitors`). Components either make it *more accurate* (detection/tracking/Re-ID) or *more
+actionable* (the API + dashboard).
 
-- A working end-to-end system beats isolated sophisticated components.
-- Each service has one clear responsibility.
-- Communicate via structured events over a streaming backbone.
-- Observability is first-class. Avoid unnecessary complexity.
-
-## System overview
+## Two-tier shape (clean seam: seeing vs serving)
 
 ```
-                ┌──────────────────────────── Event Stream (Kafka-compatible) ────────────────────────────┐
-                │                                                                                           │
-   CCTV / video │        frame.captured          detection.created        track.updated        session.*   │
-   ─────────────▼──────┐   ─────────────►   ┌──────────────┐  ───────►  ┌──────────────┐  ──────►  ┌────────▼────────┐
-   │   detector        │                    │   tracker    │            │  analytics   │           │      api        │
-   │  (YOLO person     │───detections──────►│ (MOT + re-id │───tracks──►│ sessions,    │──metrics─►│   (FastAPI)     │
-   │   detection)      │                    │  + zone map) │            │ dwell, zones │           │  REST endpoints │
-   └───────────────────┘                    └──────────────┘            │ funnels,     │           └────────┬────────┘
-                                                                         │ anomalies    │                    │
-                                                                         └──────┬───────┘                    │
-                                                                                │                            ▼
-                                                            ┌───────────────────▼──────────┐         ┌──────────────┐
-                                                            │   PostgreSQL (metrics store)  │◄────────│   Frontend   │
-                                                            │   Redis (cache / hot state)   │         │   (React)    │
-                                                            └───────────────────────────────┘         └──────────────┘
-
-   Cross-cutting: Prometheus metrics + Grafana dashboards, structured logging on every service.
+ Raw CCTV clips (5 cams)
+      │  OpenCV samples ~5 fps
+      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ DETECTION PIPELINE  (offline/CV; owns all per-person reasoning)       │
+│   YOLOv8 detect → ByteTrack track → Re-ID (visitor_id, cross-cam,     │
+│   re-entry) → zone & direction logic → emit BEHAVIOURAL events        │
+└─────────────────────────────────────────────────────────────────────┘
+      │  events.jsonl  +  HTTP POST (batched, simulated real-time)
+      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ INTELLIGENCE API  (FastAPI; owns ingest, storage, metrics)            │
+│   POST /events/ingest  → validate, dedup (idempotent), store          │
+│   GET /stores/{id}/{metrics,funnel,heatmap,anomalies}, /health        │
+│            │ reads/writes                                             │
+│            ▼   PostgreSQL (events + derived metrics)                  │
+└─────────────────────────────────────────────────────────────────────┘
+      │  JSON
+      ▼
+ Live dashboard (≥1 metric updating as events arrive)   +   Prometheus/Grafana, structured logs
 ```
 
-## Services
+The two tiers share exactly one contract — the **event schema** ([[EVENT_SCHEMA]]). Either side can be
+reworked independently. The whole stack starts with one `docker compose up`.
 
-| Service | Responsibility | Consumes | Produces |
-|---------|----------------|----------|----------|
-| **detector** | Detect persons in frames using YOLO. Stateless per frame. | video frames | `detection.created` events |
-| **tracker** | Assign stable IDs across frames (multi-object tracking), map detections to store zones via the floor plan. | `detection.created` | `track.updated` events |
-| **analytics** | Build sessions, compute dwell/zone engagement, **session-based funnel**, anomalies, KPIs; **join POS CSV for conversion rate**. Persist metrics. | `track.updated` + POS CSV | `session.*`, `metric.*` events + DB writes |
-| **api** | Expose business insights over REST (FastAPI). Read from DB/Redis. | DB / Redis | HTTP/JSON responses |
-| **frontend** | Dashboard visualizing footfall, journeys, funnels, KPIs. | api | — |
+## Components & responsibilities
+| Component | Responsibility | Key inputs → outputs |
+|-----------|----------------|----------------------|
+| **Detection pipeline** | Detect people, track them, assign a per-visit `visitor_id` (Re-ID), classify staff, map to zones/direction, compute dwell & queue, **emit behavioural events**. Owns all CV + sessionization. | CCTV clips → `events.jsonl` + POST to API |
+| **Intelligence API** (FastAPI) | Ingest events (idempotent, deduped, partial-success), persist, and compute metrics/funnel/heatmap/anomalies on read. Health + observability. | events → JSON metrics |
+| **PostgreSQL** | Durable store for events + derived metrics; the query surface. | — |
+| **Dashboard** | Show ≥1 metric live as events flow (Part E). | API → screen |
+| **Prometheus + Grafana** | Process metrics + dashboards (observability). | `/metrics` |
 
-## Data flow
+## Camera → role mapping (our 5 cams → spec's 3 roles)
+Entry = **CAM3** (calibrated footfall line) · Main floor = **CAM1 + CAM2** · Billing = **CAM5** ·
+Back room (staff, excluded) = **CAM4**. Cross-camera overlap (CAM1/2/3 near the front) is handled by
+Re-ID de-duplication so one shopper is counted once.
 
-1. **Ingestion** — frames are read from CCTV footage and emitted/handled by the detector.
-2. **Detection** — YOLO produces bounding boxes for persons per frame.
-3. **Tracking** — detections are associated over time into tracks; each track point is mapped to a store zone using the floor-plan homography/zone polygons.
-4. **Analytics** — tracks are aggregated into sessions; dwell time, zone engagement, journeys, funnel stages, and anomalies are computed and persisted.
-5. **Serving** — the API reads computed metrics; the frontend renders them.
+## Data flow (one visitor)
+1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).
+2. **Track** — ByteTrack links boxes into a stable track; a `visitor_id` is assigned at `ENTRY`.
+3. **Re-ID** — the same person across overlapping cameras / on return maps to the same `visitor_id`
+   (→ `REENTRY`, never a second `ENTRY`).
+4. **Behavioural events** — crossing the entrance line → `ENTRY`/`EXIT`; zone presence →
+   `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30 s); billing → `BILLING_QUEUE_JOIN`/`ABANDON`.
+5. **Ingest** — events POSTed in batches to `/events/ingest`; deduped by `event_id` (idempotent).
+6. **Serve** — metrics/funnel/heatmap/anomalies computed from stored events at query time; conversion
+   joins POS via the 5-minute billing-window rule ([[BUSINESS_RULES]]).
 
-## Communication
-
-- **Event stream:** Kafka-compatible streaming as the backbone between services (decoupling, replayability, scale). A lightweight in-process/queue shim may back early development; the contract stays event-shaped. See [[DECISIONS]].
-- **Contracts:** All events conform to schemas in [[EVENT_SCHEMA]]. Pydantic models are the single definition shared via a common contracts module.
+## Production concerns (first-class)
+- **Idempotency:** `event_id` is the dedup key; re-POSTing a batch is safe (covers the durability a
+  broker would have given).
+- **Graceful degradation:** DB unavailable → HTTP 503 with a structured body, never a raw stack trace.
+- **Zero-traffic:** empty windows return valid zeros, never null/crash.
+- **Observability:** structured JSON logs per request (`trace_id, store_id, endpoint, latency_ms,
+  event_count, status_code`); Prometheus `/metrics`; Grafana.
+- **Confidence calibration:** low-confidence detections are flagged on the event, never silently dropped.
 
 ## Storage
+**PostgreSQL** — makes the DB-down→503 path realistic and reads scale cleanly. SQLite is the documented
+simpler alternative (single-file, fewer containers). See [[DECISIONS]] ADR-0005.
 
-- **PostgreSQL** — durable store for sessions, metrics, aggregates (query surface for the API).
-- **Redis** — hot state / caching (e.g. active tracks, last-known positions, rate-limited reads).
+## Why no message broker
+The spec is ingest-centric, and the gate hinges on a clean one-command start. The pipeline writes
+`events.jsonl` and POSTs batches to `/events/ingest`; idempotent ingest makes replay safe. This removes
+a heavy moving part (Redpanda) that added gate risk. At 40 live stores we would reintroduce a queue in
+front of ingest — a known, bounded scaling step (see [[DECISIONS]] ADR-0005 and the scale Q in [[INTERVIEW_QA]]).
 
-## Observability
+## Scaling notes (40 stores, real-time)
+Detection is the CPU bottleneck; each store's feeds are independent, so scale **horizontally** (a
+detector worker per store/camera), optionally GPU or fewer fps. The API/ingest is lighter and scales
+separately behind a queue. Conversion/funnel are per-store and parallelisable.
 
-- **Structured logging** in every service (JSON logs, correlation/trace IDs per frame & track).
-- **Prometheus** metrics endpoints per service (throughput, latency, queue depth, detection counts).
-- **Grafana** dashboards for pipeline health + business KPIs.
-
-## Deployment
-
-- Each service is independently **Dockerized**.
-- **docker-compose** orchestrates the full stack (services + Kafka + Postgres + Redis + Prometheus + Grafana) for local/reviewer runs.
-
-## Open architectural questions
-
-- Streaming backbone concrete choice (Kafka vs. Redpanda vs. in-proc shim for the demo) — see [[DECISIONS]].
-- Re-identification across multiple cameras (if multi-camera).
-- Where zone-mapping (homography) lives: tracker vs. a dedicated mapping step.
-
-> Status: design seeded during scaffolding. Implementation pending plan approval.
+## Repo layout (deviation from the spec's suggestion is noted here)
+We use `services/` (detector, api, common) rather than the spec's `pipeline/` + `app/`, because the
+shared `common` package (event contracts, config, logging) is imported by both tiers. Functionally
+equivalent; the spec permits deviation when explained.

@@ -8,7 +8,36 @@
 
 ## Current phase
 
-🟢 **Phase 1 DONE (gate met). Phase 2 in progress — Slice 2.0 DONE, Slice 2.1 next.**
+🟠 **Re-aligned to the authoritative problem statement ([[SPEC]], ADR-0005).** Phase 1 + Slices
+2.0/2.1 done; Phase 2 **re-planned**. Slice 2.2 (tracking + ENTRY/EXIT in the new schema) next.
+
+### Deliverables + wiki reconciliation (2026-05-31)
+- **DESIGN.md** (784w) + **CHOICES.md** (640w) at repo root — production-grade, structured, with
+  AI-Assisted Decisions / 3 decisions + trade-offs. Prompt blocks in all test files reformatted to
+  **Task/Context/Constraints/Output**. 13 tests pass.
+- **Wiki reconciled** (not just appended): ARCHITECTURE.md rewritten to the current ingest-centric,
+  no-broker, Re-ID design (old diagram/tables removed); PROJECT.md, BUSINESS_RULES.md, EDGE_CASES.md
+  de-duplicated and stale content removed (old conversion formula, resolved open questions, duplicate
+  dwell sections, stale status table).
+- New **`/update-wiki`** slash command (`.claude/commands/update-wiki.md`) — reconciliation pass that
+  fixes conflicts and removes superseded content on demand.
+
+### Re-alignment (2026-05-31, after reading the Problem Statement PDF)
+- PDF **dataset description was a print mistake** — `raw/` (Brigade, 5 cams) is final. Spec's
+  schema/endpoints/scoring/edge-cases/North-Star **are authoritative**.
+- New canonical: [[SPEC]]. **Reversed PD-5** → Re-ID required (`visitor_id`, `REENTRY`, cross-cam dedup).
+- **Event schema** → prescribed flat behavioural schema + 8 types ([[EVENT_SCHEMA]]).
+- **API** → `POST /events/ingest` + `/stores/{id}/{metrics,funnel,heatmap,anomalies}` + `/health` ([[API_SPEC]]).
+- **Dropped Redpanda broker** → pipeline emits JSONL + POSTs to `/events/ingest`. Kept Postgres.
+- Conversion redefined (POS 5-min billing-window rule). Added queue/abandon/heatmap/anomalies/dwell, the 7 edge cases, Part D AI docs.
+- **Code impact (not yet done):** refactor `common.contracts.events` to the new schema; replace api `/api/v1/*` with the prescribed endpoints; reorganize tracker/analytics into the pipeline + API; retire the broker in compose. Slice 2.1's YOLO detection is reused; its emission changes.
+
+### Slice 2.1 (done) — detector sees people & emits events
+- `common/stream.py`: `EventProducer` (confluent-kafka, idempotent, keyed, JSON) — lazy import so api stays slim.
+- `detector/app/detect.py`: `PersonDetector` (Ultralytics YOLO, lazy) + pure `boxes_to_detections` (person class + conf filter, xyxy→xywh).
+- `detector/app/main.py`: loops customer cameras (skips CAM4 stockroom) via `VideoFrameSource` → detect → publish `detection.created` to Redpanda, keyed by camera; idles after one pass (recorded clips). Config: `detector_max_frames`, `detector_reprocess`.
+- Detector Dockerfile: libgl1/glib, ultralytics+confluent-kafka, **YOLO weights pre-baked** (no runtime download). compose mounts `docs/raw/CCTV Footage` → `/data/cctv` (ro), `CCTV_DIR` env.
+- **Verified:** preview overlays show boxes on real people (`docs/wiki/frames/CAM_*_det_*.jpg`); ran stack and consumed `detection.created` — real structured events (CAM1=20,CAM2=45,CAM3=7,CAM5=11 dets over 10 frames each), frame_id/ts_ms confirm 5 fps. 13 unit tests pass.
 
 ### Slice 2.0 (done) — calibration + frame reader
 - `services/detector/app/frames.py`: `VideoFrameSource` (context-managed video reader, configurable
@@ -38,16 +67,15 @@
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.1 (detector: real detections)
-Make the detector actually see people:
-1. Add `ultralytics` to `services/detector/requirements.txt`; wire CV deps into `services/detector/Dockerfile`
-   (opencv-headless needs `libgl1`/`libglib2.0-0` on slim) + bind-mount `docs/raw/CCTV Footage` → `/data/cctv`.
-2. In `detector/app`, use `VideoFrameSource` to read CAM frames → run YOLO (person class) → build
-   `DetectionCreated` events → publish to Redpanda topic `detection.created` (add a small Kafka producer).
-3. Verify: consume the topic and see structured events; overlay boxes on sample frames to confirm
-   they sit on real people. This also satisfies the gate's "pipeline produces structured events" for real.
+## ▶ Next action — Slice 2.2 (tracking + ENTRY/EXIT in the prescribed schema)
+1. Define the prescribed event as Pydantic models in `common` ([[EVENT_SCHEMA]]); keep YOLO detection from 2.1.
+2. tracker: **ByteTrack** per camera → stable `track_id`; assign a `visitor_id` per visit.
+3. On CAM3, use the calibrated `EntranceLine` (`zones.py`): foot-point `OUTSIDE`→`INSIDE` ⇒ `ENTRY`,
+   `INSIDE`→`OUTSIDE` ⇒ `EXIT`. Emit prescribed events to a JSONL file (ingest path comes in 2.6).
+4. **Validate the entrance line for real** (Slice 2.0 promise): overlay tracks + line on CAM3,
+   count entries by eye vs system; nudge coords if needed.
 
-Then Slice 2.2 (tracker + footfall), 2.3 (conversion), 2.4 (funnel), 2.5 (dashboard).
+See [[TASKS]] Phase 2 for slices 2.3–2.7. Re-ID/staff/groups land in 2.4; API ingest in 2.6.
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.

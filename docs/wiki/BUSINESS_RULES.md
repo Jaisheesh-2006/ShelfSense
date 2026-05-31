@@ -9,18 +9,23 @@
 - **Track** — one tracked person across frames (per camera), a `track_id`.
 - **Session** — one customer visit; bounded by entry and exit. The unit for funnel/conversion
   (sessions, **never raw detections**, to avoid double counting — rubric-critical).
-- **Zone** — a named store region defined per camera from the footage (e.g. entrance, aisle,
-  checkout). To be defined after frame inspection ([[STATE]]).
+- **Zone** — a named store region from the floor plan ([[GROUND_TRUTH]] §4): entrance, skincare_aisle,
+  makeup_aisle, foh_center, checkout, accessories, stockroom (staff).
+- **Visitor** — one visit session, identified by a `visitor_id` (Re-ID). Re-entries keep the same id.
 - **Transaction** — one POS order from the CSV (`distinct order_id`). 24 on 10-Apr-2026.
 
-## Headline metric — Conversion rate
+## Headline metric — Conversion rate (North Star)
 
-- **Definition:** `conversion_rate = transactions ÷ footfall` over a comparable window.
-- **transactions:** `count(distinct order_id)` from the CSV (see [[GROUND_TRUTH]] §2).
-- **footfall:** unique customer sessions entering the store, counted from CCTV.
-- **⚠ Window rule:** video (~2 min) and CSV (full day) windows differ. Do **not** divide
-  full-day transactions by clip footfall. Demonstrate on a comparable/representative basis and
-  state the assumption (A3 in [[PROJECT]], PD-3 in [[DECISIONS]]). Reviewers reward this honesty.
+- **Definition (per [[SPEC]]):** `conversion_rate = converted visitors ÷ unique visitors` over a
+  session window. Staff excluded.
+- **Converted visitor (POS correlation rule):** a visitor whose session was in the **billing zone
+  within the 5-minute window before a POS transaction timestamp** (same store) counts as converted.
+  No `customer_id` — correlation is **time-window + store** only.
+- **unique visitors:** distinct `visitor_id`s (Re-ID; re-entries are the *same* visitor, not new).
+- **POS source:** Brigade CSV → `transaction_id` (invoice/order), `timestamp` (order_date+order_time),
+  `basket_value` (order total). 24 transactions on 10-Apr ([[GROUND_TRUTH]] §2).
+- **⚠ Window caveat:** clips (~2 min) vs CSV (full day) differ — compute on a comparable/representative
+  window and document it (PD-3 in [[DECISIONS]]). Don't divide mismatched windows.
 
 ## Footfall (entry/exit)
 
@@ -33,37 +38,45 @@
 
 - **Start:** first detection of the track after entry.
 - **End:** track lost > `session_timeout` OR outward exit crossing.
-- **Re-entry rule `(TBD)`:** same person returning within `reentry_window` → same session vs new
-  visit. Decision affects footfall; document choice. See [[EDGE_CASES]].
+- **Re-entry rule:** a returning visitor (matched by Re-ID) keeps the **same `visitor_id`** and emits
+  `REENTRY`, never a second `ENTRY` — so footfall/conversion are not inflated. See [[EDGE_CASES]].
 
 ## Customer journey
-- Ordered sequence of zones a session visits with timestamps. Append a zone only when dwell
+- Ordered sequence of zones a visitor passes through with timestamps. Append a zone only when dwell
   ≥ `min_zone_dwell` to filter pass-through noise.
 
-## Zone engagement & dwell time
-- **Dwell:** total contiguous time a session's mapped position is inside a zone polygon.
-- **Engagement:** session counted as engaging a zone when dwell ≥ `min_engagement_dwell`.
-- Report per-zone session counts and avg/total dwell.
+## Conversion funnel (spec stages — Part B, get this right)
+- **Stages (per [[SPEC]]):** `Entry → Zone Visit → Billing Queue → Purchase`, with counts + drop-off %.
+- **Session is the unit; NO double counting:** each `visitor_id` counts at most once per stage;
+  **re-entries do not double-count** a visitor.
+- **Drop-off:** `drop_off(stage_n) = 1 − visitors(stage_n) ÷ visitors(stage_{n-1})`.
+- **Purchase:** visitor satisfies the POS correlation rule above.
 
-## Conversion funnel (35-mark bucket — get this right)
-- **Stages (default):** `Entered → Browsed (≥1 product zone) → Approached checkout → Purchased`.
-- **Session-based, NO double counting:** each session contributes at most once per stage.
-- **Drop-off:** `rate(stage_n) = sessions reaching stage_n ÷ sessions reaching stage_(n-1)`.
-  `/funnel` must show monotonic drop-off (reviewers check this).
-- **Purchased:** tie to POS transactions where possible; otherwise infer from checkout-zone
-  engagement and clearly label the inference `(TBD)`.
+## Zone dwell & engagement
+- **Dwell:** total contiguous time a visitor's mapped position (foot point) is inside a zone.
+- **Engagement:** a visitor is counted as engaging a zone when dwell ≥ `min_engagement_dwell`.
+- A `ZONE_DWELL` event is emitted **every 30s** of continuous presence in a zone (see [[EVENT_SCHEMA]]).
+- Report per-zone visitor counts and avg/total dwell (feeds the heatmap).
 
-## Checkout activity
-- Sessions present at the **checkout** zone; queue/dwell stats there. Engagement ≥ `min_engagement_dwell`.
+## Billing queue & abandonment
+- **queue_depth:** number of visitors in the billing zone at the moment a visitor joins
+  (set in `metadata.queue_depth` on `BILLING_QUEUE_JOIN`).
+- **Abandonment:** `BILLING_QUEUE_ABANDON` when a visitor leaves the billing zone **without** a
+  POS transaction following (per the correlation rule). **abandonment rate** = abandons ÷ billing-zone sessions.
 
-## Anomaly detection (must be "logical and meaningful")
-- Rule-based first, each rule documented here with its threshold. Candidates: abnormal dwell,
-  crowd spike, entrance with no subsequent zone activity, checkout idle during peak,
-  after-hours presence. `(TBD: thresholds)` — must compute from input (integrity cap).
+## Heatmap
+- Per-zone **visit frequency + average dwell**, **normalised 0–100** for grid rendering.
+- Include a `data_confidence` flag when **< 20 sessions** in the window (low-sample warning).
+
+## Anomalies (severity + suggested action)
+- **Queue spike:** billing `queue_depth` exceeds a threshold/trend.
+- **Conversion drop:** conversion rate materially below the **7-day average**.
+- **Dead zone:** a zone with **no visits for 30 minutes** (during open hours).
+- Each: `severity` INFO/WARN/CRITICAL + a human `suggested_action`. Compute from input (no hardcoding).
 
 ## Store KPIs
-- Total footfall, conversion rate, avg session duration, avg dwell per zone, top zones,
-  peak-hour footfall, basket size (from CSV: line-items ÷ transactions), GMV by department.
+- Unique visitors, conversion rate, avg session duration, avg dwell per zone, top zones,
+  basket value (from POS), abandonment rate, queue depth.
 
 ## Configurable thresholds (env-driven, surfaced here — single source)
 

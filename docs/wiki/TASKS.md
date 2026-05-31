@@ -22,22 +22,37 @@
 ## Phase 2 — Vertical slice (thin end-to-end, gate-safe)
 - ✅ **Slice 2.0** — Calibrated CAM 3 entrance line in `zones.py` (`(320,490)→(1140,415)`, inside_sign=-1)
   + reusable `VideoFrameSource` frame reader (`services/detector/app/frames.py`) + unit tests (7 passing).
-- ⬜ **Slice 2.1** — detector: read frames (OpenCV) → YOLO person detection → emit `detection.created`
-- ⬜ tracker: ByteTrack associate → emit `track.updated` with zone mapping (entrance line-crossing)
-- ⬜ analytics: sessions → footfall + **session-based funnel** + conversion (load POS CSV → `transactions`) → persist
-- ⬜ Confirm api `/funnel` + `/metrics` show real, input-varying values once tables populated
-- ⬜ frontend: minimal dashboard (footfall, funnel, conversion)
+- ✅ **Slice 2.1** — detector: reads customer-camera clips (OpenCV) → YOLO person detection → publishes
+  real `detection.created` events to Redpanda. Verified: boxes land on real people
+  (`docs/wiki/frames/CAM_3_det_*.jpg`) + structured events on the topic (keyed by camera, 5 fps).
+  `confluent-kafka` producer in `common/stream.py`; model pre-baked in image. 13 tests passing.
+> ⚠️ **Re-planned (ADR-0005 / [[SPEC]]).** Slices now produce the **prescribed behavioural events**
+> and the **prescribed API**. The detection *pipeline* (detector+tracker+re-id+emit) owns
+> sessionization; the **API ingests events** and computes metrics. Redpanda broker dropped —
+> pipeline POSTs to `/events/ingest` (events also written to JSONL; simulated real-time for Part E).
+> Slice 2.1's YOLO detection is reused; only its **emission** changes to the new schema.
 
-## Phase 3 — Deepen analytics & edge cases
-- ⬜ Re-entry, staff exclusion, group entry, occlusion handling ([[EDGE_CASES]])
-- ⬜ Journeys, zone engagement, checkout activity, anomalies (rule-based, meaningful)
-- ⬜ KPIs incl. basket size + GMV by department from CSV
+- ⬜ **Slice 2.2 — Tracking + ENTRY/EXIT (+ visitor_id).** ByteTrack per camera; CAM3 entrance-line
+  crossing → emit `ENTRY`/`EXIT` (prescribed schema) with a `visitor_id`, to JSONL. **Validate the
+  entrance line** (Slice 2.0 promise): overlay tracks, count entries by eye vs system.
+- ⬜ **Slice 2.3 — Zones + dwell.** Map tracks to zones; emit `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30s).
+- ⬜ **Slice 2.4 — Re-ID + edge cases.** Cross-camera dedup + `REENTRY` (no double-count), `is_staff`
+  classification, group-entry (count individuals), confidence calibration (flag low-conf, don't drop).
+- ⬜ **Slice 2.5 — Billing queue + POS.** `BILLING_QUEUE_JOIN`/`ABANDON` + `queue_depth`; POS
+  correlation (5-min billing-zone window → converted). See [[BUSINESS_RULES]].
+- ⬜ **Slice 2.6 — API ingest + core metrics.** `POST /events/ingest` (idempotent/dedup/partial/≤500);
+  `GET /stores/{id}/metrics` + `/funnel` (session-based, no double-count). Retire old `/api/v1/*`.
+- ⬜ **Slice 2.7 — heatmap + anomalies + health.** `/heatmap` (normalised, data_confidence),
+  `/anomalies` (queue spike / conversion drop vs 7-day / dead zone; severity + suggested_action), `/health` (STALE_FEED).
 
-## Phase 4 — Production polish & submission
-- ⬜ Error handling pass; Prometheus metrics + Grafana dashboards; tracing
-- ⬜ Pytest: unit + edge-case + one pipeline integration test
-- ⬜ Per-service Dockerfiles; verify `docker compose up` clean from scratch
-- ⬜ **Generate `DESIGN.md` + `CHOICES.md` at repo root** from [[ARCHITECTURE]]+[[DECISIONS]] (ADR-0003)
-- ⬜ Final gate dry-run against [[GROUND_TRUTH]] §3 checklist
+## Phase 3 — Production hardening, AI docs, dashboard
+- ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);
+  idempotency tests; graceful degradation (DB down → 503, no stack traces).
+- ⬜ Pytest **>70% coverage** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel);
+  **prompt blocks** atop test files (`# PROMPT:` / `# CHANGES MADE:`).
+- 🔄 **Part D (now LIVE, maintained each slice):** `DESIGN.md` + `CHOICES.md` at repo root (>250 words
+  each) created; `# PROMPT`/`# CHANGES MADE` blocks added to all test files. Keep in sync as design moves.
+- ⬜ **Part E (bonus):** live dashboard — ≥1 metric updating as the pipeline POSTs events (web > terminal).
+- ⬜ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
 
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

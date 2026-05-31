@@ -1,3 +1,16 @@
+# PROMPT
+# Task:
+#   - Unit-test the detector's frame-sampling logic with pytest.
+# Context:
+#   - compute_stride() picks how many source frames to skip; our clips run at 29.97 and 24.98 fps,
+#     sampled at a target 5 fps; Frame is a frozen dataclass.
+# Constraints:
+#   - Pure logic only, no video file or OpenCV use; assert exact values for our real frame rates.
+# Output:
+#   - Tests: stride 29.97->6 and 24.98->5; guards for zero/negative and target>source; Frame immutability.
+# CHANGES MADE:
+#   - Added the divide-by-zero and target>source guard cases the first draft omitted.
+#   - Asserted the exact strides for our actual clips (6 and 5) rather than generic numbers.
 """Unit tests for the detector frame sampling logic (pure, no video needed)."""
 import numpy as np
 

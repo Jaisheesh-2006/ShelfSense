@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     person_class_id: int = 0  # COCO 'person'
     cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
+    detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
+    detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
 
     # --- Business-rule thresholds (see BUSINESS_RULES.md) ---
     min_zone_dwell_ms: int = 2000

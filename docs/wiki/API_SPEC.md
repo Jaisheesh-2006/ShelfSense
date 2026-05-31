@@ -1,52 +1,51 @@
 # API SPEC
 
-> API surface of the **api** service (FastAPI). API-first. Reviewers judge whether endpoints
-> return meaningful, consistent business outputs — this is the **largest scored bucket (35)**.
-> `/metrics` and `/funnel` are explicitly checked (see [[GROUND_TRUTH]] §3). Definitions of
-> returned values live in [[BUSINESS_RULES]].
+> The Intelligence API surface — prescribed by [[SPEC]] (Part B, 35 marks — the largest bucket).
+> The API **ingests** the behavioural events ([[EVENT_SCHEMA]]) and computes metrics from them.
+> Metric definitions live in [[BUSINESS_RULES]]. `store_id = "ST1008"`.
 
 ## Conventions
-- Base path `/api/v1`. JSON in/out, Pydantic-validated.
-- Time filters `from`/`to` (ISO-8601); default last 24h.
-- Error envelope `{ "error": { "code": "...", "message": "..." } }`.
-- Outputs must **vary with input** (integrity cap, [[RISKS]] R-2).
+- JSON in/out, Pydantic-validated. Time filters default to a sensible recent window.
+- Structured error envelope; no raw stack traces (graceful degradation → 503 when DB down).
+- Exclude `is_staff=true` from all customer metrics. Handle **zero-traffic** windows (return 0, never null/crash).
+- Outputs computed from ingested events — never hardcoded.
 
-## Mandatory / gate-relevant endpoints
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/metrics` | **Gate requirement.** Prometheus metrics AND/OR business metrics summary — must return a valid, logically consistent response. (Clarify split: Prometheus at `/metrics`, business summary at `/api/v1/metrics`.) |
-| GET | `/api/v1/funnel` | **Graded.** Session-based conversion funnel with monotonic drop-off (no double counting). |
-| GET | `/healthz` / `/readyz` | Liveness / readiness (DB+Redis reachable). |
+## Endpoints (prescribed)
 
-## Business endpoints
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/v1/conversion` | Conversion rate = transactions ÷ footfall (with window caveat, [[BUSINESS_RULES]]). |
-| GET | `/api/v1/footfall` | Footfall over time (`?granularity=hour\|day`). |
-| GET | `/api/v1/footfall/summary` | Totals + peak hour. |
-| GET | `/api/v1/sessions` / `/sessions/{id}` | Sessions list / detail incl. journey. |
-| GET | `/api/v1/zones` / `/zones/engagement` | Zones / engagement + dwell per zone. |
-| GET | `/api/v1/journeys` | Aggregated common paths / transitions. |
-| GET | `/api/v1/anomalies` | Detected anomalies over a window. |
-| GET | `/api/v1/kpis` | Headline KPIs (footfall, conversion, basket size, GMV by dept). |
+| Method | Path | Returns | Key requirements |
+|--------|------|---------|------------------|
+| POST | `/events/ingest` | accept a batch of **≤500** events; validate, dedup, store | **idempotent by `event_id`** (safe to POST twice); **partial success** on malformed events; structured error response |
+| GET | `/stores/{id}/metrics` | unique visitors, **conversion rate**, avg dwell/zone, queue depth, abandonment rate | exclude staff; handle zero-purchase; real-time (not cached) |
+| GET | `/stores/{id}/funnel` | Entry → Zone Visit → Billing Queue → Purchase, with counts + drop-off % | **session is the unit**; re-entries don't double-count a visitor |
+| GET | `/stores/{id}/heatmap` | per-zone visit frequency + avg dwell, **normalised 0–100** | include `data_confidence` flag if <20 sessions in window |
+| GET | `/stores/{id}/anomalies` | active anomalies: queue spike, conversion drop vs 7-day avg, dead zone (no visits 30 min) | severity `INFO`/`WARN`/`CRITICAL`; `suggested_action` per anomaly |
+| GET | `/health` | service status, last event timestamp per store, `STALE_FEED` if >10 min lag | accurate — first thing an on-call engineer checks |
+| GET | `/metrics` (Prometheus) | process/observability metrics | kept for Part C observability + Grafana |
 
-## Example — `GET /api/v1/funnel`
+## Examples
+
+`POST /events/ingest`
+```json
+// request: { "events": [ { ...event per EVENT_SCHEMA... }, ... up to 500 ] }
+// response: { "accepted": 498, "duplicates": 1, "rejected": 1,
+//             "errors": [ { "index": 42, "error": "missing event_id" } ] }
+```
+
+`GET /stores/ST1008/funnel`
 ```json
 {
-  "window": { "from": "...", "to": "..." },
+  "store_id": "ST1008",
   "stages": [
-    { "stage": "entered",            "sessions": 120 },
-    { "stage": "browsed",            "sessions": 88,  "rate_from_prev": 0.73 },
-    { "stage": "approached_checkout","sessions": 41,  "rate_from_prev": 0.47 },
-    { "stage": "purchased",          "sessions": 24,  "rate_from_prev": 0.59 }
+    { "stage": "entry",         "visitors": 120 },
+    { "stage": "zone_visit",    "visitors": 88,  "drop_off_pct": 26.7 },
+    { "stage": "billing_queue", "visitors": 41,  "drop_off_pct": 53.4 },
+    { "stage": "purchase",      "visitors": 24,  "drop_off_pct": 41.5 }
   ],
-  "overall_conversion": 0.20
+  "conversion_rate": 0.20
 }
 ```
 
-## Open question
-- Exact contract of `/metrics`: Prometheus exposition format (for the gate/observability) vs.
-  a business-metrics JSON. Plan: serve Prometheus at `/metrics`, business summary at
-  `/api/v1/metrics`, and confirm the reviewer's intent. Track in [[DECISIONS]].
-
-> OpenAPI auto-generated by FastAPI once implemented.
+## Implementation notes
+- `POST /events/ingest` writes validated events to Postgres, deduped by `event_id` (idempotent).
+- metrics/funnel/heatmap/anomalies are computed from stored events at query time (real-time).
+- Replaces the earlier `/api/v1/*` endpoints (ADR-0005). OpenAPI auto-generated by FastAPI.
