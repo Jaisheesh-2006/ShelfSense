@@ -1,0 +1,136 @@
+# ShelfSense full stack. One command, zero manual steps (acceptance-gate requirement):
+#   docker compose up --build
+#
+# Exposes to the host: api:8000, prometheus:9090, grafana:3000.
+# Postgres/Redis/Redpanda are internal-only (not published) to avoid clashing with local services.
+
+# Shared environment for the Python services. Sensible defaults so the stack runs with no .env.
+x-app-env: &app-env
+  ENVIRONMENT: development
+  LOG_LEVEL: INFO
+  STREAM_BOOTSTRAP_SERVERS: redpanda:9092
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: shelfsense
+  POSTGRES_USER: shelfsense
+  POSTGRES_PASSWORD: shelfsense
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+
+services:
+  # ---- Infrastructure ----
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shelfsense
+      POSTGRES_USER: shelfsense
+      POSTGRES_PASSWORD: shelfsense
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shelfsense -d shelfsense"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ---- Application services ----
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  detector:
+    build:
+      context: .
+      dockerfile: services/detector/Dockerfile
+    environment: *app-env
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tracker:
+    build:
+      context: .
+      dockerfile: services/tracker/Dockerfile
+    environment: *app-env
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: services/analytics/Dockerfile
+    environment: *app-env
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Observability ----
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:

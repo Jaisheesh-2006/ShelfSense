@@ -1,0 +1,17 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+docs/raw
+docs/wiki/frames
+*.mp4
+*.avi
+*.mov
+*.pt
+*.onnx
+scripts/_*.py
+node_modules
+frontend

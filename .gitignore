@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.next/
+*.log
+
+# ML / data artifacts
+*.pt
+*.onnx
+*.weights
+data/
+datasets/
+*.mp4
+*.avi
+*.mov
+models/
+
+# Raw source data — user-owned, NEVER committed.
+# Contains customer PII (names/phone numbers in the CSV) and large CCTV videos + real faces.
+docs/raw/
+
+# Extracted CCTV frames — contain real customers' faces. Keep local only.
+docs/wiki/frames/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Docker / infra local state
+*.pid
+volumes/
