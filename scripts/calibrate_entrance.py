@@ -20,7 +20,6 @@ sys.path.insert(0, str(REPO / "services" / "common"))
 sys.path.insert(0, str(REPO / "services" / "detector"))
 
 from app.frames import VideoFrameSource  # noqa: E402
-
 from shelfsense_common.contracts import STORE, EntranceLine  # noqa: E402
 
 CAM3 = REPO / "docs" / "raw" / "CCTV Footage" / "CCTV Footage" / "CAM 3.mp4"

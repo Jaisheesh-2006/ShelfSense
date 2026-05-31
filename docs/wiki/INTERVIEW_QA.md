@@ -78,3 +78,52 @@ the rubric rewards (confidence calibration).
 CPU-bound YOLO inference. Each store's feeds are independent, so we'd scale horizontally (one detector
 worker per store/camera), use GPU or a smaller model, and/or sample fewer fps. The API/ingest is
 lighter and scales separately.)*
+
+## Slice 2.2 — Tracking (ByteTrack) + ENTRY/EXIT footfall
+
+**Q1. How do you count footfall without counting the same person many times?**
+First, **ByteTrack** gives each person a stable `track_id` across frames, so a shopper is one identity,
+not 50 detections — counting is always on *tracks*, never raw detections. We then separate two things:
+**flow** (`ENTRY`/`EXIT`) fires only on a real directional crossing of the calibrated door line; and
+**unique visitors** (the conversion denominator) is the count of distinct `visitor_id`s — one per
+tracked customer seen inside the store, de-duplicated by Re-ID. We split them because, on a 2-minute
+clip, almost everyone is already inside, so door-crossings are ≈0 while there are clearly real visitors
+to count. Standing or being re-detected never inflates either number.
+
+**Q2. Why is the line-crossing logic a separate pure class, and what does it actually do?**
+`CrossingDetector` is deliberately decoupled from YOLO, datetime, and config so it's **fully
+unit-testable** — it's the part of footfall correctness we own (ByteTrack does association; we decide
+what's a business event). Per track it remembers the last confirmed side of the line; a first sighting
+only *seeds* the side (someone already inside at clip start must not fake an `ENTRY`); points exactly on
+the line are ignored; and a side change must persist `confirm_frames` frames before it counts, which
+debounces a shopper hovering on the threshold. It mints the `visitor_id` at `ENTRY` and a `session_seq`.
+
+**Q3. Tell me about a bug you caught in your own footfall logic.**
+A good one, because it shows why we validate against the real video. The original door line caught
+**zero** crossings, and a foot-point **trajectory map** showed all the heavy motion in a corridor on the
+*right* of the frame. So I moved the line there — and it produced a tidy **3 ENTRY / 3 EXIT**. It looked
+great. But on review of the actual video, that right corridor is the **mall walkway**: those were people
+*walking past the shop*, not entering it. I'd been counting pass-by traffic as footfall — the exact
+failure that inflates vendor systems. We **reverted the line to the real centre-left door**, where the
+honest answer for this clip is **0 crossings** — because in a 2-minute window almost everyone is already
+inside. The lesson, which we wrote into the decision log: put the line where people cross the *threshold*,
+not where the most motion is, and never trust whichever placement gives a prettier number. That catch is
+also what drove redefining "unique visitors" as distinct people seen *inside* the store (ADR-0007), so the
+conversion metric is meaningful on this data without fabricating entries.
+
+**Q4. Why track the entrance at 10 fps when detection ran at 5 fps?**
+Association is motion-based — ByteTrack predicts where each box goes and matches it to the next frame.
+At too-low fps a walking person jumps too far between frames and the tracker loses or swaps identities,
+which would inflate the count. 10 fps keeps motion small enough for reliable association at the door,
+where people move fastest, while the rest of the pipeline can sample sparser. It's a config value
+(`tracker_sample_fps`), so it's tunable per camera without code changes.
+
+**Q5. What are the known weaknesses here, and where do they get fixed?**
+Honest ones. (a) On 2-min clips, entrance-crossing footfall is ≈0 (shoppers already inside) — so we count
+unique visitors as distinct people seen in-store; on longer/live feeds ENTRY/EXIT would carry more signal.
+(b) `visitor_id` is currently **per-camera**, so a shopper visible in overlapping CAM1/CAM2/CAM3 is
+counted more than once — **Re-ID + cross-camera dedup (Slice 2.4)** fixes this, and also turns a returning
+shopper into a `REENTRY` rather than a new visit. (c) At 10 fps a fast walker can still cause an ID switch;
+the tracker mitigates but doesn't eliminate it. (d) The entrance line is a fixed-camera calibration —
+robust unless the camera moves. We state these rather than hide them; honesty about limits is part of the
+engineering grade.

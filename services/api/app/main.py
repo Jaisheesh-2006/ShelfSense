@@ -11,12 +11,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from shelfsense_common.config import get_settings
+from shelfsense_common.logging import configure_logging, get_logger
 
 from app.db import init_db
 from app.metrics import HTTP_LATENCY, HTTP_REQUESTS, render_metrics
 from app.routers import business, health
-from shelfsense_common.config import get_settings
-from shelfsense_common.logging import configure_logging, get_logger
 
 settings = get_settings()
 configure_logging(service_name="api", level=settings.log_level)

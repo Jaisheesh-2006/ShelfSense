@@ -32,10 +32,15 @@
 > pipeline POSTs to `/events/ingest` (events also written to JSONL; simulated real-time for Part E).
 > Slice 2.1's YOLO detection is reused; only its **emission** changes to the new schema.
 
-- ⬜ **Slice 2.2 — Tracking + ENTRY/EXIT (+ visitor_id).** ByteTrack per camera; CAM3 entrance-line
-  crossing → emit `ENTRY`/`EXIT` (prescribed schema) with a `visitor_id`, to JSONL. **Validate the
-  entrance line** (Slice 2.0 promise): overlay tracks, count entries by eye vs system.
-- ⬜ **Slice 2.3 — Zones + dwell.** Map tracks to zones; emit `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30s).
+- ✅ **Slice 2.2 — Tracking + ENTRY/EXIT (+ visitor_id).** ByteTrack (`PersonTracker`) on CAM3 at 10 fps;
+  pure `CrossingDetector` line-crossing state machine → `BehaviorEvent` `ENTRY`/`EXIT` (prescribed schema)
+  with `visitor_id` + `session_seq`, written to JSONL (`JsonlEventSink`). Redpanda producer dropped from
+  detector. **Integrity catch (ADR-0006):** an interim line on the right corridor counted mall pass-by as
+  "3/3"; user review caught it → reverted to the real centre-left door → honest **0 crossings** (shoppers
+  already inside). Drove **ADR-0007** (unique visitors = distinct in-store people). 26 tests pass; ruff clean.
+- ⬜ **Slice 2.3 — Visitor registry + zones + dwell.** Track all customer cams; assign a `visitor_id` per
+  customer on **first detection** (ADR-0007 — the unique-visitor basis), per-camera for now. Map tracks to
+  zones; emit `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30s).
 - ⬜ **Slice 2.4 — Re-ID + edge cases.** Cross-camera dedup + `REENTRY` (no double-count), `is_staff`
   classification, group-entry (count individuals), confidence calibration (flag low-conf, don't drop).
 - ⬜ **Slice 2.5 — Billing queue + POS.** `BILLING_QUEUE_JOIN`/`ABANDON` + `queue_depth`; POS

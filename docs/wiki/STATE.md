@@ -8,8 +8,37 @@
 
 ## Current phase
 
-🟠 **Re-aligned to the authoritative problem statement ([[SPEC]], ADR-0005).** Phase 1 + Slices
-2.0/2.1 done; Phase 2 **re-planned**. Slice 2.2 (tracking + ENTRY/EXIT in the new schema) next.
+🟢 **Slice 2.2 done — ENTRY/EXIT mechanism built & validated.** Phase 1 + Slices 2.0/2.1/2.2 complete.
+Detector tracks (ByteTrack) on CAM3 and emits prescribed `ENTRY`/`EXIT` events to JSONL (no broker).
+Validation **caught and fixed an integrity bug** (a mall-corridor line counted pass-by traffic; reverted
+to the real door → honest 0 crossings on this clip, see ADR-0006) and the team **redefined unique
+visitors** as distinct in-store people (ADR-0007). Slice 2.3 (visitor registry + zones) next.
+
+### Slice 2.2 (done) — tracking + ENTRY/EXIT in the prescribed schema
+- **Prescribed schema:** `BehaviorEvent` (flat, 8 `BehaviorEventType`s, `EventMetadata`) in
+  `common/contracts/behavior.py` — UTC ISO-8601 timestamps, `zone_id` null for ENTRY/EXIT, validators
+  enforce both. This is now the emitted/ingested contract; the old envelope (`events.py`) is internal.
+- **Tracking:** `detector/app/track.py` `PersonTracker` wraps Ultralytics **ByteTrack** (`persist=True`,
+  `reset()` between cameras); pure `boxes_to_tracks` split out for tests. Entrance tracked at 10 fps.
+- **Footfall core:** `detector/app/crossing.py` `CrossingDetector` — pure per-track line-crossing state
+  machine (seed-on-first-sight, on-line ignored, `confirm_frames` flicker debounce), mints `visitor_id`
+  at ENTRY + `session_seq`. Fully unit-tested.
+- **Emission:** `common/sinks.py` `JsonlEventSink` (append NDJSON). `detector/app/main.py` rewritten:
+  CAM3 → track → crossing → `BehaviorEvent` → JSONL. **Redpanda producer dropped** from the detector.
+  `run_once()` extracted so `scripts/emit_entrance_events.py` runs a single pass locally.
+- **⚠ Entrance line — integrity catch (ADR-0006):** an interim move to the frame's right corridor
+  reported "3 ENTRY / 3 EXIT", but **user video review showed that corridor is the MALL walkway** —
+  pass-by pedestrians, not visitors. **Reverted to the centre-left door** `(320,490)→(1140,415)`. With
+  the correct line this clip yields **0 crossings**, which matches the video (everyone visible is
+  already inside; only mall traffic moves). Mechanism is sound (unit-tested); the number is honest.
+- **➡ Visitor definition decided (ADR-0007):** because clean door-crossings ≈0 on 2-min clips,
+  **unique visitors = distinct people detected in-store** (`visitor_id` per tracked customer on first
+  sighting, Re-ID-deduped in 2.4), not door-crossings. `ENTRY`/`EXIT` remain flow events. Implemented
+  from Slice 2.3 (visitor registry across customer cameras).
+- **Verified:** `validate_entrance.py` over the full clip → **0/0 at the correct door** (matches reality);
+  the crossing/schema/sink logic is covered by **26 unit tests (pass); ruff clean**. `emit_entrance_events.py`
+  runs the real pipeline path and writes schema-valid JSONL. Config: `detection_confidence` 0.35,
+  `tracker_sample_fps` 10, `crossing_confirm_frames` 2, `clip_start_iso` ~20:10 IST.
 
 ### Deliverables + wiki reconciliation (2026-05-31)
 - **DESIGN.md** (784w) + **CHOICES.md** (640w) at repo root — production-grade, structured, with
@@ -67,13 +96,16 @@
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.2 (tracking + ENTRY/EXIT in the prescribed schema)
-1. Define the prescribed event as Pydantic models in `common` ([[EVENT_SCHEMA]]); keep YOLO detection from 2.1.
-2. tracker: **ByteTrack** per camera → stable `track_id`; assign a `visitor_id` per visit.
-3. On CAM3, use the calibrated `EntranceLine` (`zones.py`): foot-point `OUTSIDE`→`INSIDE` ⇒ `ENTRY`,
-   `INSIDE`→`OUTSIDE` ⇒ `EXIT`. Emit prescribed events to a JSONL file (ingest path comes in 2.6).
-4. **Validate the entrance line for real** (Slice 2.0 promise): overlay tracks + line on CAM3,
-   count entries by eye vs system; nudge coords if needed.
+## ▶ Next action — Slice 2.3 (visitor registry + zones + ZONE_ENTER / ZONE_EXIT / ZONE_DWELL)
+1. Generalize the tracker loop to **all customer cameras** (CAM1/CAM2/CAM5), per-camera tracker state
+   (`reset()` between clips). Footfall ENTRY/EXIT stays CAM3-only.
+2. **Visitor registry (ADR-0007):** assign a `visitor_id` to every tracked customer on **first
+   detection** in a customer area (not only at a door crossing). This is the unique-visitor basis for
+   conversion. Per-camera for now; Re-ID dedup across overlapping cams in 2.4.
+3. Map each track's foot-point to its camera's **primary zone** (camera-level, [[DECISIONS]] PD-4);
+   emit `ZONE_ENTER`/`ZONE_EXIT` on transitions and a `ZONE_DWELL` every 30s of continuous presence
+   ([[EVENT_SCHEMA]], [[BUSINESS_RULES]]). Debounce with `min_zone_dwell`. Write the same JSONL sink.
+4. Validate: distinct visitor_ids per camera + zone events for CAM1/CAM2/CAM5; eyeball vs the clips.
 
 See [[TASKS]] Phase 2 for slices 2.3–2.7. Re-ID/staff/groups land in 2.4; API ingest in 2.6.
 

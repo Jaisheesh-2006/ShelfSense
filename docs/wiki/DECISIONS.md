@@ -91,3 +91,67 @@ What changes vs. our earlier design:
   calibrated entrance line, Pydantic contracts, LLM-wiki workflow.
 - **New pending:** Re-ID approach (OSNet/torchreid embedding vs. trajectory/appearance-distance) — pick in the Re-ID slice;
   staff detection (heuristic vs. VLM) — pick in that slice. Both must be defendable + documented in CHOICES.md.
+
+---
+
+## ADR-0006 — Footfall via ByteTrack + line-crossing; CAM3 entrance line re-calibrated (Slice 2.2)
+- **Date:** 2026-05-31 · **Status:** Accepted
+
+- **Context:** Slice 2.2 implements footfall — stable identities and `ENTRY`/`EXIT` events. Two
+  decisions emerged, one of them from real evidence.
+- **Decision:**
+  1. **Tracking:** YOLOv8n + **ByteTrack** (Ultralytics built-in, no extra dep) on the entrance
+     clip at **10 fps** (denser than the 5 fps used for plain detection — association needs it).
+     A per-track **line-crossing state machine** (`CrossingDetector`) converts foot-point
+     side-changes into events; it is **pure and unit-tested** (the library does association, we
+     own the business event). Flicker is debounced (`crossing_confirm_frames=2`).
+  2. **Entrance line stays on the centre-left door (a wrong move was caught and reverted).** The
+     Slice 2.0 line `(320,490)→(1140,415)` sits on the front edge of the wood floor by the centre
+     glass partition — the real doorway. A foot-point **trajectory map** showed dense motion in a
+     corridor on the frame's **right**, so an interim attempt moved the line there → it reported
+     "3 ENTRY / 3 EXIT". **User review of the video flagged this as wrong:** that right corridor is
+     the **mall walkway**, so those were *pass-by pedestrians, not store visitors* — false footfall.
+     The line was **reverted to the centre-left door**. With the correct line this clip yields
+     **0 crossings**, which matches what the video actually shows (see decision 4 for why).
+  3. **Emission:** events are written to **JSONL** (`JsonlEventSink`), not the broker — realising
+     ADR-0005(d). The detector no longer depends on Redpanda.
+  4. **Why 0 crossings is correct here, not a bug:** the clips are ~2 min, so almost everyone on
+     camera is **already inside** (they entered before the window); the only heavy movement is mall
+     pass-by, which we (correctly) don't count. Clean door-crossings in a 2-min window are genuinely
+     near-zero. The counting *mechanism* is sound (unit-tested) and would fire on a real crossing.
+     → This motivates **ADR-0007** (define unique visitors as distinct people seen in-store, not
+     only door-crossers), so the North Star is computable on this data.
+- **Alternatives:** counting raw detections (no identity → massive double-count); chasing the
+  busiest motion (rejected — it was mall traffic); homography to floor coords (heavier, unneeded).
+- **Tradeoffs / residual risk:** at 10 fps a fast walker can yield an ID switch; a shopper
+  loitering on the line can ping-pong ENTRY/EXIT under one `track_id` — **Re-ID + `REENTRY`
+  (Slice 2.4)** collapses that into one visit. `visitor_id` is currently **per-track, not yet
+  cross-camera-deduped**.
+- **Lesson (kept deliberately):** "place the line where the *most* people move" is wrong; place it
+  where people cross the *store threshold*. Validate geometry against the actual video, not against
+  whichever line produces a non-zero number. This catch is a positive integrity signal.
+
+---
+
+## ADR-0007 — Unique visitors = distinct people seen in-store (not only door-crossers)
+- **Date:** 2026-05-31 · **Status:** Accepted (user decision)
+- **Context:** Footfall via entrance line-crossing yields ≈0 on the 2-min clips because most
+  shoppers are **already inside** when the window starts (ADR-0006 decision 4). Conversion
+  (`converted ÷ unique visitors`) would divide by zero. The clip-vs-CSV window mismatch (PD-3),
+  now concrete.
+- **Decision:** A **`visitor_id` is assigned to every tracked customer on first detection in a
+  customer area** (CAM1/CAM2/CAM3/CAM5; CAM4 staff excluded), not only when someone crosses the
+  entrance line. **Unique visitors = count of distinct `visitor_id`s** seen in the window
+  (de-duplicated across overlapping cameras by Re-ID, Slice 2.4). `ENTRY`/`EXIT` events are **still
+  emitted** when a real door-crossing is observed — they remain the truth for *flow* — but they are
+  not the basis of the visitor count. Conversion = converted ÷ distinct visitors.
+- **Alternatives:** (a) strict door-crossings only → honest but degenerate (0 visitors on this
+  clip); (b) seed everyone present at t=0 as a synthetic ENTRY → fabricates entries we didn't
+  observe (integrity risk). Rejected in favour of counting people we *actually detect inside*.
+- **Tradeoffs:** "visitor" now means "distinct person observed in the store during the window",
+  which is exactly what a short clip can support and what the spec's "distinct visitor_id" implies.
+  We must lean on **Re-ID (2.4)** so the same person across CAM1/2/3 isn't counted 2–3×; until then
+  counts are per-camera and will over-count overlaps (documented).
+- **Rationale:** makes the North Star computable and honest on the real data; aligns with
+  [[SPEC]]/[[EVENT_SCHEMA]] ("`visitor_id` unique per visit"); avoids both the divide-by-zero and the
+  fabricate-entries traps. Implemented starting Slice 2.3 (visitor registry across customer cameras).

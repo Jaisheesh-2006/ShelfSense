@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import redis
-
 from shelfsense_common.config import get_settings
 
 _client = redis.Redis.from_url(get_settings().redis_url, socket_connect_timeout=2)

@@ -7,8 +7,8 @@
 # Constraints:
 #   - Read coordinates from the live STORE config (do not hardcode) so tests track re-calibration.
 # Output:
-#   - Tests: CAM3 is the calibrated entrance; wood point inside, threshold point outside; side() signed
-#     and consistent with inside_sign; a point exactly on the line returns 0.
+#   - Tests: CAM3 is the calibrated entrance; interior point inside, exterior point outside;
+#     side() signed and consistent with inside_sign; a point exactly on the line returns 0.
 # CHANGES MADE:
 #   - Switched from hardcoded coordinates to the live STORE config.
 #   - Added the on-the-line (==0) boundary case.
@@ -25,9 +25,9 @@ def test_entrance_camera_is_calibrated():
 
 def test_inside_outside_match_the_store_geometry():
     line = STORE.entrance_camera.entrance_line
-    # Upper-left = retail wood floor / shelves = inside the store.
+    # Upper part of the frame (smaller y) = toward the product floor = inside the store.
     assert line.is_inside(640, 250) is True
-    # Lower-right = dark threshold / mall = outside.
+    # Lower part (larger y) = toward the mall threshold = outside.
     assert line.is_inside(1000, 800) is False
 
 

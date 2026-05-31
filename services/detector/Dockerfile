@@ -1,4 +1,4 @@
-# Build context = repo root. Detector: YOLO person detection -> detection.created events.
+# Build context = repo root. Detector: YOLO + ByteTrack -> ENTRY/EXIT behavioural events (JSONL).
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

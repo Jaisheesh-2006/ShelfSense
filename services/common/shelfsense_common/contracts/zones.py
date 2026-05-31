@@ -8,12 +8,12 @@ frame in Phase 2 — defaults below are placeholders flagged as such).
 """
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class ZoneName(str, Enum):
+class ZoneName(StrEnum):
     ENTRANCE = "entrance"
     SKINCARE_AISLE = "skincare_aisle"
     MAKEUP_AISLE = "makeup_aisle"
@@ -23,7 +23,7 @@ class ZoneName(str, Enum):
     STOCKROOM = "stockroom"
 
 
-class CameraRole(str, Enum):
+class CameraRole(StrEnum):
     ENTRANCE = "entrance"
     PRODUCT = "product"
     CHECKOUT = "checkout"
@@ -111,10 +111,13 @@ STORE = StoreConfig(
             role=CameraRole.ENTRANCE,
             primary_zone=ZoneName.ENTRANCE,
             fps=29.97,
-            # Calibrated on a real CAM 3 frame (scripts/calibrate_entrance.py): the line runs
-            # along the front edge of the retail wood floor. Crossing onto the wood (inside_sign
-            # side) = entering the shopping area. inside_sign=-1 → the upper-left (wood) side is
-            # inside. Refine in Slice 2.2 by overlaying real tracks. See GROUND_TRUTH §1.
+            # Entrance line along the front edge of the retail wood floor, by the centre glass
+            # partition where the real doorway is (user-confirmed). NOTE: an earlier Slice 2.2
+            # attempt moved this onto the RIGHT-side corridor chasing heavy foot traffic there —
+            # but that corridor is the MALL walkway (pass-by, not store entries), so it was
+            # reverted (ADR-0006). Real store entries cross here, centre-left; the dense right-side
+            # motion must NOT be counted as footfall. inside_sign=-1 → the wood-floor side is
+            # inside. See GROUND_TRUTH §1.
             entrance_line=EntranceLine(
                 x1=320, y1=490, x2=1140, y2=415, inside_sign=-1, calibrated=True
             ),

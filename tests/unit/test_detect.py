@@ -2,12 +2,12 @@
 # Task:
 #   - Unit-test boxes_to_detections (the pure YOLO post-filter) offline.
 # Context:
-#   - It keeps only the person class above a confidence threshold and converts xyxy->xywh, exposing a
-#     foot_point used later for zone/line logic.
+#   - It keeps only the person class above a confidence threshold and converts xyxy->xywh,
+#     exposing a foot_point used later for zone/line logic.
 # Constraints:
 #   - No YOLO model or GPU; mock raw boxes as plain (class_id, confidence, xyxy) tuples.
 # Output:
-#   - Tests: drop non-person class; drop below threshold; correct xywh + foot_point; empty input -> [].
+#   - Tests: drop non-person class; drop below threshold; correct xywh + foot_point; empty -> [].
 # CHANGES MADE:
 #   - Added the foot_point assertion and the empty-input case.
 #   - Used plain tuples so the test needs no model.

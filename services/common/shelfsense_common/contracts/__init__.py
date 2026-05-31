@@ -1,5 +1,10 @@
 """Versioned data contracts shared across services (events + zone/store config)."""
 
+from shelfsense_common.contracts.behavior import (
+    BehaviorEvent,
+    BehaviorEventType,
+    EventMetadata,
+)
 from shelfsense_common.contracts.events import (
     SCHEMA_VERSION,
     AnomalyDetected,
@@ -26,6 +31,9 @@ from shelfsense_common.contracts.zones import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "BehaviorEvent",
+    "BehaviorEventType",
+    "EventMetadata",
     "Event",
     "EventType",
     "make_event",

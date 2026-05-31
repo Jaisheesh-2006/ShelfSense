@@ -2,8 +2,8 @@
 # Task:
 #   - Unit-test that an event serializes to the expected JSON wire format.
 # Context:
-#   - make_event() wraps a payload in an envelope (event_type, schema_version, source, correlation_id);
-#     that JSON is what the ingest/consumer side reads.
+#   - make_event() wraps a payload in an envelope (event_type, schema_version, source,
+#     correlation_id); that JSON is what the ingest/consumer side reads.
 # Constraints:
 #   - Assert the exact keys downstream depends on; no broker or network.
 # Output:
@@ -11,7 +11,7 @@
 #     auto-generates event_id/correlation_id when omitted.
 # CHANGES MADE:
 #   - Asserted the exact JSON keys the consumer relies on; added the auto-generated-id case.
-#   - NOTE: update when the schema migrates to the prescribed behavioural schema (ADR-0005, Slice 2.2).
+#   - NOTE: this envelope is internal; emitted events use the behavioural schema (ADR-0005).
 """Unit tests for event contracts: JSON serialization is the wire format on the stream."""
 import json
 

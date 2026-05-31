@@ -1,5 +1,6 @@
 # Detector service dependencies.
 opencv-python-headless>=4.9
 numpy>=1.26
-ultralytics>=8.2          # YOLO person detection (pulls torch, CPU)
-confluent-kafka>=2.3      # publish detection.created events to Redpanda
+ultralytics>=8.2          # YOLO person detection + ByteTrack (pulls torch, CPU)
+lap>=0.5.12               # ByteTrack association solver — baked in so tracking works OFFLINE
+                          # (Ultralytics otherwise auto-downloads it at runtime, breaking the gate)

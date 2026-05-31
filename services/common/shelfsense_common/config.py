@@ -6,9 +6,9 @@ docs/wiki/BUSINESS_RULES.md.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,12 +45,21 @@ class Settings(BaseSettings):
 
     # --- Detector ---
     yolo_model: str = "yolov8n.pt"
-    detection_confidence: float = 0.4
+    detection_confidence: float = 0.35  # validated on CAM3 corridor traffic (Slice 2.2)
     person_class_id: int = 0  # COCO 'person'
     cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
     detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
+
+    # --- Tracking / behavioural events (Slice 2.2) ---
+    tracker_sample_fps: float = 10.0  # higher than detection fps: ByteTrack needs denser frames
+    tracker_cfg: str = "bytetrack.yaml"  # Ultralytics built-in tracker config
+    crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
+    events_jsonl_path: str = "/data/events/behavior.jsonl"  # where the pipeline writes events
+    # Clip wall-clock start (store-local), approx from the burnt-in CCTV overlay (~20:10 IST,
+    # 10-Apr-2026). Used to turn per-frame media time into an absolute UTC event timestamp.
+    clip_start_iso: str = "2026-04-10T20:10:00+05:30"
 
     # --- Business-rule thresholds (see BUSINESS_RULES.md) ---
     min_zone_dwell_ms: int = 2000
@@ -72,6 +81,11 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def clip_start_dt(self) -> datetime:
+        """Clip wall-clock start as a timezone-aware datetime (for absolute event timestamps)."""
+        return datetime.fromisoformat(self.clip_start_iso)
 
 
 @lru_cache

@@ -21,7 +21,6 @@ sys.path.insert(0, str(REPO / "services" / "detector"))
 
 from app.detect import PersonDetector  # noqa: E402
 from app.frames import VideoFrameSource  # noqa: E402
-
 from shelfsense_common.config import get_settings  # noqa: E402
 from shelfsense_common.contracts import STORE  # noqa: E402
 

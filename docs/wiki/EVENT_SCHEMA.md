@@ -47,10 +47,15 @@ Field rules: `event_id` unique (UUIDv4); `timestamp` UTC ISO-8601; `zone_id` nul
 | `REENTRY` | same `visitor_id` seen after a prior `EXIT` | Re-ID must catch this (not a 2nd ENTRY) |
 
 ## visitor_id (Re-ID)
-A token unique **per visit session**, assigned at `ENTRY`. Survives short occlusion (within-camera
-tracking), is **deduplicated across overlapping cameras** (CAM1/CAM2/CAM3), and a returning shopper
-produces `REENTRY` under the **same** `visitor_id` — never a fresh `ENTRY`. See [[EDGE_CASES]].
+A token unique **per visit session**, assigned to a tracked customer on **first detection in a customer
+area** — not only at `ENTRY`, because on short clips most shoppers are already inside (ADR-0007). It
+survives short occlusion (within-camera tracking), is **deduplicated across overlapping cameras**
+(CAM1/CAM2/CAM3, Slice 2.4), and a returning shopper produces `REENTRY` under the **same** `visitor_id` —
+never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the conversion denominator). See
+[[EDGE_CASES]], [[BUSINESS_RULES]].
 
 ## Status
-Prescribed schema adopted (ADR-0005). To implement as Pydantic models in `shelfsense_common`
-(replacing the bbox-event contract) and validate emitted events before ingest.
+Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
+`shelfsense_common/contracts/behavior.py` (Slice 2.2). `ENTRY`/`EXIT` are **emitted from real
+CAM3 footage** to JSONL via the detector. `ZONE_*` land in Slice 2.3; billing/`REENTRY` in 2.4–2.5.
+Validators enforce: tz-aware UTC timestamp, and `zone_id=None` for ENTRY/EXIT.

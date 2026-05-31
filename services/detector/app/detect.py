@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import numpy as np
-
 from shelfsense_common.contracts import BBox, Detection
 
 # A raw detection from the model: (class_id, confidence, (x1, y1, x2, y2)) in pixels.

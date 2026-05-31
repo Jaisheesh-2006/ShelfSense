@@ -5,9 +5,8 @@ at scrape time — so `/metrics` values genuinely reflect input and vary with it
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
-
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from sqlalchemy import func, select
 
 from app.db import Metric, Transaction, VisitSession, get_session
 

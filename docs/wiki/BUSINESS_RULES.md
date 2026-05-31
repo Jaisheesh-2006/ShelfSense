@@ -21,7 +21,11 @@
 - **Converted visitor (POS correlation rule):** a visitor whose session was in the **billing zone
   within the 5-minute window before a POS transaction timestamp** (same store) counts as converted.
   No `customer_id` — correlation is **time-window + store** only.
-- **unique visitors:** distinct `visitor_id`s (Re-ID; re-entries are the *same* visitor, not new).
+- **unique visitors:** distinct `visitor_id`s — assigned to **every tracked customer on first
+  detection in a customer area**, not only to people who cross the entrance line (ADR-0007). Re-ID
+  de-duplicates across cameras and keeps re-entries the *same* visitor. This is the conversion
+  denominator. (Rationale: on ~2-min clips, most shoppers are already inside, so entrance-crossings ≈ 0
+  — see [[DECISIONS]] ADR-0006/0007.)
 - **POS source:** Brigade CSV → `transaction_id` (invoice/order), `timestamp` (order_date+order_time),
   `basket_value` (order total). 24 transactions on 10-Apr ([[GROUND_TRUTH]] §2).
 - **⚠ Window caveat:** clips (~2 min) vs CSV (full day) differ — compute on a comparable/representative
@@ -29,9 +33,14 @@
 
 ## Footfall (entry/exit)
 
-- **Definition:** count of sessions entering the store in a window.
-- **Rule:** a session counts when its track crosses the **entrance line** inward (line-crossing
-  on the entrance camera). Exits counted on outward crossing.
+- **Definition:** `ENTRY`/`EXIT` count the *flow* across the entrance threshold in a window.
+- **Rule:** an `ENTRY` fires when a track's foot-point crosses the **entrance line** inward on CAM3
+  (calibrated, centre-left door); `EXIT` on outward crossing. Debounced for on-line flicker.
+- **⚠ On short clips this is ≈0** because most shoppers entered before the window — so the
+  **unique-visitor count** (above), not entrance-crossings, is the basis for conversion (ADR-0007).
+  ENTRY/EXIT remain valuable as real flow signals and would scale on longer/live feeds.
+- **Do NOT count mall pass-by:** people walking the mall corridor past the storefront are not
+  visitors; the entrance line is placed on the actual door, not the busiest motion (ADR-0006).
 - **Must handle (Detection bucket, 30 marks):** re-entry, staff, group entry — see [[EDGE_CASES]].
 
 ## Customer session

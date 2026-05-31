@@ -70,7 +70,7 @@ def funnel() -> FunnelResponse:
         ).all()
 
     # Sessions whose furthest stage == k.
-    reached_exactly = {stage: 0 for stage in FUNNEL_STAGES}
+    reached_exactly = dict.fromkeys(FUNNEL_STAGES, 0)
     for stage, count in rows:
         if stage in reached_exactly:
             reached_exactly[stage] = count

@@ -12,8 +12,8 @@ Design notes:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,14 +22,14 @@ SCHEMA_VERSION = "1.0"
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_id() -> str:
     return str(uuid.uuid4())
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Canonical event type names (noun.verb, past tense)."""
 
     FRAME_CAPTURED = "frame.captured"

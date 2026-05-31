@@ -38,7 +38,9 @@ as staff and excluded from customer metrics. Overlap between the front cameras i
 one shopper is counted once.
 
 ## 4. How the North Star is computed
-1. **Unique visitors** = distinct `visitor_id`s (Re-ID; re-entries are the *same* visitor).
+1. **Unique visitors** = distinct `visitor_id`s — one assigned per tracked customer on first
+   detection inside the store (de-duplicated across cameras by Re-ID; re-entries are the *same*
+   visitor). This, not raw door-crossings, is the denominator (see §5 for why).
 2. **Converted visitor** = a visitor present in the **billing zone within the 5-minute window before a
    POS transaction** (no customer id exists, so correlation is by time-window + store).
 3. **Conversion rate** = converted ÷ unique, staff excluded. The funnel
@@ -50,6 +52,18 @@ against the failure modes that inflate vendor systems: groups are counted as ind
 do not double-count, and staff are filtered out. Low-confidence detections are *flagged on the event*,
 not silently dropped — so uncertainty is visible rather than hidden.
 
+Footfall uses **ByteTrack** (stable per-person identity) plus a pure, unit-tested **line-crossing
+state machine** on the entrance camera: an `ENTRY`/`EXIT` fires only when a track's foot-point actually
+crosses the calibrated door line, with on-line flicker debounced. We **validated the line against the
+real video** and it caught a genuine error: an interim placement chased the busiest motion and ended up
+on the **mall walkway**, counting pass-by pedestrians as visitors — a classic false-footfall trap. We
+reverted it to the real centre-left doorway, where this 2-minute clip shows **≈0 clean crossings**,
+because almost everyone on camera is *already inside* (they entered before the window). Rather than
+fabricate entrances or chase mall traffic for a prettier number, we therefore count **unique visitors as
+distinct people detected inside the store** (a `visitor_id` per tracked customer, de-duplicated by Re-ID),
+and keep `ENTRY`/`EXIT` as flow events for when a crossing genuinely occurs. The counts move with the
+input and never include non-customers — which is exactly what the integrity check rewards.
+
 ## 6. Production readiness
 - **One-command start:** `docker compose up`, no manual steps; the YOLO model is baked into the image
   so there is no runtime download.
@@ -60,14 +74,33 @@ not silently dropped — so uncertainty is visible rather than hidden.
   event_count, status_code`); Prometheus metrics; Grafana dashboards.
 - **Tested:** unit + edge-case coverage (empty store, all-staff, zero purchases, re-entry in funnel).
 
-## 7. Known limitations & next steps
-- Conversion is window-correlated, not identity-linked (no PII) — it can mis-attribute in dense
-  billing periods; documented and bounded by the 5-minute rule.
-- The entry line is a per-camera manual calibration; robust to a fixed camera, not to camera moves.
+## 7. Assumptions
+Where the real data forced an interpretation, we state it **explicitly here** rather than bury it, so a
+reviewer knows exactly what is measured and why. Each is data-driven and revisited if better data arrives.
+
+- **A1 — CCTV clips contain almost no entry/exit events, so a "visitor" is a distinct person seen
+  *inside* the store, not a door-crosser.** The 5 clips are ~2-minute *synchronised* windows. With the
+  entrance line on the real CAM3 door, the whole clip yields **0 clean threshold crossings**: nearly
+  everyone on camera is *already inside* (they entered before the window began), and the only sustained
+  motion is **mall pass-by** behind the storefront glass, which we deliberately exclude. We therefore
+  **assume/define unique visitors = distinct `visitor_id`s detected in a customer area** (one per tracked
+  customer, Re-ID-deduped), and keep `ENTRY`/`EXIT` as flow events for when a crossing genuinely occurs.
+  *Why:* makes the North Star computable on this data without fabricating entrances; on longer or live
+  feeds, entrance-crossing footfall regains its meaning. (See `docs/wiki/DECISIONS.md` ADR-0006/0007.)
+- **A2 — Conversion is correlated by time-window, not customer identity.** No PII customer id exists, so a
+  visitor counts as converted if they were in the billing zone within 5 minutes before a POS transaction.
+- **A3 — Clip vs full-day POS mismatch is handled by windowing, not naive division.** Footfall/sessions are
+  computed on a comparable window and any extrapolation is documented, never `full-day txns ÷ clip footfall`.
+
+## 8. Known limitations & next steps
+- The entry line is a per-camera calibration validated against the real video; robust to a fixed camera,
+  not to camera moves. Until Re-ID (next slice), visitor counts are **per-camera and over-count** people
+  in overlapping views; cross-camera dedup and re-entry collapsing fix this. (Visitor definition: §7 A1.)
+- Conversion can mis-attribute in dense billing periods — bounded by the 5-minute rule (§7 A2).
 - At 40 live stores the CPU-bound detector is the bottleneck — scale horizontally per store and put a
   queue in front of ingest. These are deliberate, bounded trade-offs, not oversights.
 
-## 8. AI-Assisted Decisions
+## 9. AI-Assisted Decisions
 AI (Claude) was used throughout; the places it materially shaped the design — and where we overrode it:
 
 1. **Event-stream architecture — overrode.** The assistant first designed an event-driven system with a

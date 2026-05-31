@@ -8,10 +8,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from shelfsense_common.config import get_settings
 from sqlalchemy import JSON, BigInteger, Float, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-
-from shelfsense_common.config import get_settings
 
 
 class Base(DeclarativeBase):
