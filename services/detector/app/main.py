@@ -33,6 +33,7 @@ from shelfsense_common.logging import configure_logging, get_logger
 from shelfsense_common.sinks import JsonlEventSink
 from shelfsense_common.worker import GracefulRunner
 
+from app.billing import BillingTracker
 from app.crossing import CrossingDetector
 from app.frames import VideoFrameSource
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
@@ -76,7 +77,12 @@ def process_camera(
         if camera.entrance_line is not None
         else None
     )
-    counts = {"frames": 0, "entries": 0, "exits": 0, "zone": 0, "reentry": 0, "off_floor": 0}
+    # Billing-queue detection runs only on the CHECKOUT camera (CAM5); off its ZONE_ENTER/EXIT.
+    billing = BillingTracker() if camera.role is CameraRole.CHECKOUT else None
+    counts = {
+        "frames": 0, "entries": 0, "exits": 0, "zone": 0,
+        "reentry": 0, "off_floor": 0, "billing": 0,
+    }
     # Running appearance signature per track (sum of per-frame histograms) until resolved.
     sig_sums: dict[int, np.ndarray] = {}
 
@@ -106,6 +112,7 @@ def process_camera(
         zone_id: str | None,
         dwell_ms: int,
         is_staff: bool,
+        queue_depth: int | None = None,
     ) -> None:
         event = BehaviorEvent(
             store_id=STORE.store_id,
@@ -117,7 +124,9 @@ def process_camera(
             dwell_ms=dwell_ms,
             is_staff=is_staff,
             confidence=confidence,
-            metadata=EventMetadata(session_seq=registry.next_seq(visitor_id)),
+            metadata=EventMetadata(
+                session_seq=registry.next_seq(visitor_id), queue_depth=queue_depth
+            ),
         )
         sink.write(event)
         emitted_visitors.add(visitor_id)
@@ -125,6 +134,7 @@ def process_camera(
             BehaviorEventType.ENTRY: "entries",
             BehaviorEventType.EXIT: "exits",
             BehaviorEventType.REENTRY: "reentry",
+            BehaviorEventType.BILLING_QUEUE_JOIN: "billing",
         }.get(event_type, "zone")
         counts[key] += 1
 
@@ -136,6 +146,7 @@ def process_camera(
         *,
         zone_id: str | None,
         dwell_ms: int,
+        queue_depth: int | None = None,
     ) -> None:
         res = registry.resolve(camera.camera_id, track_id, current_signature(track_id), ts_ms)
         is_staff = staff.is_staff(camera.camera_id, track_id, dwell_ms)
@@ -143,7 +154,9 @@ def process_camera(
             write_event(
                 res.visitor_id, BehaviorEventType.REENTRY, ts_ms, confidence, None, 0, is_staff
             )
-        write_event(res.visitor_id, event_type, ts_ms, confidence, zone_id, dwell_ms, is_staff)
+        write_event(
+            res.visitor_id, event_type, ts_ms, confidence, zone_id, dwell_ms, is_staff, queue_depth
+        )
 
     def emit_zone(ze: ZoneEvent) -> None:
         emit(
@@ -154,6 +167,22 @@ def process_camera(
             zone_id=ze.zone,
             dwell_ms=ze.dwell_ms,
         )
+        if billing is None:  # only the checkout camera has billing
+            return
+        if ze.event_type is BehaviorEventType.ZONE_ENTER:
+            is_staff = staff.is_staff(camera.camera_id, ze.track_id, ze.dwell_ms)
+            for be in billing.join(ze.track_id, ze.ts_ms, ze.confidence, is_staff=is_staff):
+                emit(
+                    be.track_id,
+                    be.event_type,
+                    be.ts_ms,
+                    be.confidence,
+                    zone_id=camera.primary_zone.value,
+                    dwell_ms=0,
+                    queue_depth=be.queue_depth,
+                )
+        elif ze.event_type is BehaviorEventType.ZONE_EXIT:
+            billing.leave(ze.track_id)
 
     tracker.reset()  # fresh per-camera track ids
     last_ts = 0
@@ -242,7 +271,10 @@ def run_once(settings: Settings, log) -> dict[str, int]:
             settings.staff_min_presence_ms if settings.staff_presence_fallback else None
         ),
     )
-    totals = {"frames": 0, "entries": 0, "exits": 0, "zone": 0, "reentry": 0, "off_floor": 0}
+    totals = {
+        "frames": 0, "entries": 0, "exits": 0, "zone": 0,
+        "reentry": 0, "off_floor": 0, "billing": 0,
+    }
     emitted_visitors: set[str] = set()  # distinct GLOBAL visitors who produced an event
 
     # truncate: a single full detection pass re-exports the JSONL, never appends stale events.

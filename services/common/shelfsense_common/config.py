@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     staff_presence_fallback: bool = False
     staff_min_presence_ms: int = 90000  # presence-fallback threshold (used only if enabled above)
 
+    # --- POS correlation / conversion (Slice 2.5) ---
+    pos_csv_path: str = "/data/pos/Brigade_Bangalore_10_April_26.csv"  # mounted sales CSV
+    store_timezone: str = "Asia/Kolkata"  # store-local tz for order_date+order_time -> UTC
+    pos_correlation_window_ms: int = 300000  # 5-min billing-zone-before-transaction window
+    conversion_low_sample_threshold: int = 20  # < N unique visitors => data_confidence "low"
+    # Demo only: align a representative billing visitor to a real sale so the flip to "converted" is
+    # visible. NEVER changes the honest clip number; honoured only by scripts/demo_conversion.py.
+    pos_demo_alignment: bool = False
+
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000

@@ -42,8 +42,8 @@ Field rules: `event_id` unique (UUIDv4); `timestamp` UTC ISO-8601; `zone_id` nul
 | `ZONE_ENTER` | enters a named zone | zone from our zone config |
 | `ZONE_EXIT` | leaves a named zone | |
 | `ZONE_DWELL` | in a zone continuously ≥30s | re-emit every 30s of continued dwell |
-| `BILLING_QUEUE_JOIN` | enters billing zone while `queue_depth > 0` | set `metadata.queue_depth` |
-| `BILLING_QUEUE_ABANDON` | leaves billing before a POS transaction follows | needs POS correlation |
+| `BILLING_QUEUE_JOIN` | non-staff visitor enters the checkout zone (CAM5) | `metadata.queue_depth` = customers in zone incl. joiner (Slice 2.5) |
+| `BILLING_QUEUE_ABANDON` | billing visitor with no POS sale following | **derived** in conversion.py (needs POS), not emitted by the detector |
 | `REENTRY` | same `visitor_id` seen after a prior `EXIT` | Re-ID must catch this (not a 2nd ENTRY) |
 
 ## visitor_id (Re-ID)
@@ -57,7 +57,8 @@ never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the convers
 ## Status
 Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
 `shelfsense_common/contracts/behavior.py`. Emitted from real footage to JSONL by the detector:
-`ENTRY`/`EXIT` on the CAM3 door (2.2); `ZONE_ENTER`/`ZONE_DWELL`/`ZONE_EXIT` on all customer cameras
-(2.3); `REENTRY` + `is_staff` flag + **cross-camera de-duplicated** `visitor_id` via appearance Re-ID
-(2.4, ADR-0008). `BILLING_QUEUE_JOIN`/`ABANDON` come in Slice 2.5. Validators enforce a tz-aware UTC
-timestamp and `zone_id=None` for ENTRY/EXIT.
+`ENTRY`/`EXIT` on the CAM3 door (2.2, footfall-only since 2.4b/ADR-0011); `ZONE_ENTER`/`DWELL`/`EXIT`
+on the shopping-floor cameras (2.3); `REENTRY` + `is_staff` (dark-uniform, ADR-0009) + **cross-camera
+de-duplicated** `visitor_id` via appearance Re-ID (2.4, ADR-0008); **`BILLING_QUEUE_JOIN` with
+`queue_depth`** on CAM5 (2.5, ADR-0012; `BILLING_QUEUE_ABANDON` derived in conversion). Validators
+enforce a tz-aware UTC timestamp and `zone_id=None` for ENTRY/EXIT.

@@ -8,9 +8,34 @@
 
 ## Current phase
 
-🟢 **Slice 2.4b done — staff identification reworked + CAM5 mirror suppressed; conversion denominator now
-exact.** Phase 1 + Slices 2.0–2.4b complete. Slice 2.5 (billing queue + POS correlation → the "converted"
-half of conversion) next.
+🟢 **Slice 2.5 done — billing queue + POS correlation; the full conversion engine exists.** Phase 1 +
+Slices 2.0–2.5 complete. Both halves of the North Star now compute from real input. Slice 2.6 (the API:
+`POST /events/ingest` + `/stores/{id}/{metrics,funnel}`, reusing this slice's pure logic) next.
+
+### Slice 2.5 (done) — billing queue + POS correlation (ADR-0012)
+- **POS loader** (`common/shelfsense_common/pos_loader.py`) + **`Transaction` contract** (`contracts/pos.py`):
+  Brigade CSV → **24 transactions** (one per order_id), `order_date`+`order_time` parsed as **IST → UTC**,
+  `amount` = sum of the order's **GMV** (day total **₹44,920**, reconciles with [[GROUND_TRUTH]] §2).
+- **Conversion engine** (`common/shelfsense_common/conversion.py`, pure): `correlate_conversions` — a
+  billing visitor within the **5-min-before-a-sale** window is converted; no-match = abandon; rate =
+  converted ÷ unique customers; `data_confidence="low"` under threshold. `pos_day_metrics` (count, GMV,
+  avg basket, peak hour, top dept). **Placed in `common` so the Slice 2.6 API reuses it verbatim.**
+- **Billing detection** (`detector/app/billing.py` `BillingTracker`, pure): on CAM5, a **non-staff**
+  visitor entering the checkout zone emits **`BILLING_QUEUE_JOIN`** with **`queue_depth`** (driven off
+  the existing CAM5 `ZONE_ENTER`/`EXIT`; wired in `main.py`). `BILLING_QUEUE_ABANDON` is **derived** in
+  conversion (needs POS). Schema/`queue_depth` already existed — no schema change.
+- **Validated (honest clip):** **conversion 0%** (`data_confidence=low`), funnel **Entry 2 → Zone 2 →
+  Billing 0 → Purchase 0** — customers browsed CAM2, none reached checkout, no sale in the 2-min window
+  (the window mismatch, not a bug). Nuance: **1 raw `BILLING_QUEUE_JOIN`** fired from a CAM5 track that
+  dipped below the staff-darkness threshold, but that visitor is **overall staff** (any-flag rule) so
+  conversion excludes it → honest billing-customer count = 0. Good end-to-end demo of layered staff handling.
+- **Demonstrated:** `scripts/demo_conversion.py` (honest report) + `POS_DEMO_ALIGNMENT=true` (a
+  representative billing visitor aligned to a **real** sale → CONVERTED, plus an ABANDON), loudly labelled
+  "not a reading of the clip." `scripts/load_pos.py` prints the 24 sales + day-metrics.
+- **Sink:** `JsonlEventSink(truncate=...)` (added 2.4b) keeps re-runs clean. **69 unit tests pass** (+17:
+  `test_pos_loader`, `test_conversion`, `test_billing`); ruff clean.
+
+### Slice 2.4b (done) — dark-uniform staff, floor mask, entrance=footfall-only
 
 ### Refined ground truth (user, 2026-06-01)
 The **7 people are store-wide** (all cameras), splitting **2 customers (grey + violet tops) + 5 staff
@@ -36,7 +61,9 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
 - **Validated end-to-end (CAM1/2/3/5):** **5 unique = 2 customers + 3 staff.** Customers = **exactly 2**
   (grey + violet on CAM2) ✅ matches ground truth. Staff 3 (the 5 black staff over-merge in colour-hist
   Re-ID — ADR-0008 weakness; harmless to conversion as staff are excluded). 52 unit tests pass; ruff clean.
-- **New tooling:** `scripts/diagnose_tracks.py` (per-track foot-point + darkness), `scripts/calibrate_floor.py`.
+- **New tooling:** `scripts/diagnose_tracks.py` (per-track foot-point + darkness), `scripts/calibrate_floor.py`,
+  `scripts/evidence_visitors.py` (labelled crop montage of every counted visitor → `frames/evidence_visitors.jpg`
+  — reproduces the live 2-customers + 3-staff split for visual verification).
 
 ### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
 - **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram
@@ -154,17 +181,16 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.5 (billing queue + POS correlation)
-1. On the **checkout camera (CAM5)**, track the billing zone: emit `BILLING_QUEUE_JOIN` with
-   `metadata.queue_depth` and `BILLING_QUEUE_ABANDON` when a visitor leaves without a purchase
-   ([[EVENT_SCHEMA]], [[BUSINESS_RULES]]).
-2. **POS correlation:** load the Brigade CSV; a visitor in the billing zone within the **5-min window
-   before a transaction** counts as **converted** (time-window + store, no customer id). [[BUSINESS_RULES]].
-3. This completes the **"converted" half** of the North Star (`converted ÷ unique visitors`) — pair it
-   with the unique-visitor count from 2.3/2.4.
-4. Mind the clip-vs-full-day window mismatch (PD-3 / DESIGN A3); demonstrate on a comparable window.
+## ▶ Next action — Slice 2.6 (Intelligence API: ingest + core metrics)
+1. **`POST /events/ingest`** — accept a batch ≤500 `BehaviorEvent`s; **idempotent by `event_id`**,
+   partial-success on bad events, structured errors; persist to Postgres ([[API_SPEC]]).
+2. **`GET /stores/{id}/metrics`** + **`/funnel`** — compute from stored events, **reusing this slice's
+   `conversion.correlate_conversions` + `pos_loader` verbatim** (the reason that logic lives in `common`).
+   Funnel is session-based, re-entries don't double-count; exclude `is_staff` (any-flag rule).
+3. **Retire the old `/api/v1/*`** endpoints (ADR-0005). Map the loader `Transaction` → the `db.Transaction` ORM.
+4. Add the compose mount `docs/raw → /data/pos` so `pos_csv_path` resolves in-container.
 
-See [[TASKS]] Phase 2 for slices 2.5–2.7. API ingest + funnel/heatmap/anomalies in 2.6.
+See [[TASKS]] Phase 2 for slices 2.6–2.7 (heatmap/anomalies/health in 2.7).
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.

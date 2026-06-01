@@ -271,3 +271,41 @@ What changes vs. our earlier design:
 - **Rationale:** aligns counting with each camera's real role (entrance = flow; floor = presence), removes
   mall pass-by + bright-background misclassification in one move, and makes the conversion denominator
   match reality without any per-number fudging.
+
+---
+
+## ADR-0012 — POS correlation in shared `common`; honest-0 conversion + a labelled demo (Slice 2.5)
+- **Date:** 2026-06-01 · **Status:** Accepted (user chose "build correct + report honest + demo-align")
+- **Context:** Conversion = converted ÷ unique customers needs the *purchase* side. No customer id exists,
+  so the SPEC rule is **time + store**: a billing-zone visitor within the **5 min before a transaction**
+  is converted. Two hard facts about the data: (i) the clip is ~2 min at ~20:10 while the 24 sales span
+  the whole day (12:15–21:40), so **no sale falls in the clip window**; (ii) both customers only browse
+  CAM2 — **neither reaches the checkout**, so there is no billing-zone customer to correlate. A literal
+  clip conversion is therefore **0**, and faking a non-zero number would trip the integrity cap.
+- **Decision (three parts):**
+  1. **Build the correlation correctly + put the pure logic in `services/common`** — `contracts/pos.py`
+     (`Transaction`), `pos_loader.py` (CSV → 24 txns, IST→UTC), `conversion.py` (`correlate_conversions`,
+     `pos_day_metrics`). Placed in `common` (not `services/analytics`) because `pyproject` only puts
+     `common`+`detector` on the path and the **Slice 2.6 API already imports `common`** — so 2.6 reuses
+     this verbatim with zero refactor. The detector stays pure-CV (it never reads the sales file).
+  2. **Billing events in the detector** — a small pure `BillingTracker` (`detector/app/billing.py`),
+     driven off CAM5's `ZONE_ENTER`/`ZONE_EXIT`, emits `BILLING_QUEUE_JOIN` with `queue_depth` for
+     non-staff. `BILLING_QUEUE_ABANDON` is **derived** in `conversion.py` (a billing visitor with no
+     following sale), because it needs POS the detector doesn't have.
+  3. **Report honest, demonstrate clearly** — on the real clip, conversion is **0** with
+     `data_confidence="low"` and a real funnel drop-off (Entry 2 → Zone 2 → Billing 0 → Purchase 0).
+     `scripts/demo_conversion.py` with `POS_DEMO_ALIGNMENT=true` injects two *representative* billing
+     visitors aligned to **real** sales (one converts, one abandons) so the mechanism is visible —
+     loudly labelled "not a reading of the 2-min clip." The demo lives only in the script; the pure
+     logic and the honest number are never faked.
+- **Alternatives:** (a) put logic in `services/analytics` — not on the test/path, and 2.6 is the API not
+  analytics, so it would need moving later; (b) extrapolate a full-day conversion from the clip's visitor
+  rate — an estimate, not a measurement, and risks reading as fabricated; (c) emit ABANDON in the detector
+  — impossible without POS. (d) Use `total_amount` (net) for basket value — switched to **GMV** so the day
+  total reconciles with the documented ₹44,920 ([[GROUND_TRUTH]] §2).
+- **Trade-offs / notes:** two `Transaction` types coexist on purpose — the pure `contracts.pos.Transaction`
+  (loader/domain) vs the SQLAlchemy row in `api/app/db.py` (persistence); 2.6 maps between them. Timezone
+  is the subtle bug surface (parse IST → UTC or everything shifts 5.5 h) — unit-tested. The container POS
+  path needs a compose mount (`docs/raw → /data/pos`) when 2.6 wires the API.
+- **Rationale:** delivers a correct, reusable, tested conversion engine; keeps the detector pure-CV; and
+  turns the dataset's window mismatch into an explicit, honest demonstration rather than a hidden fudge.

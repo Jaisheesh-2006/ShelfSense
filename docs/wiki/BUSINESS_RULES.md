@@ -30,8 +30,10 @@
   ADR-0006/0007. Validated count on the clip: **2 customers** + 3 staff.)
 - **POS source:** Brigade CSV → `transaction_id` (invoice/order), `timestamp` (order_date+order_time),
   `basket_value` (order total). 24 transactions on 10-Apr ([[GROUND_TRUTH]] §2).
-- **⚠ Window caveat:** clips (~2 min) vs CSV (full day) differ — compute on a comparable/representative
-  window and document it (PD-3 in [[DECISIONS]]). Don't divide mismatched windows.
+- **⚠ Window caveat (handled, ADR-0012):** clips (~2 min) vs CSV (full day) differ, and no sale falls in
+  the clip window. We **do not** divide mismatched windows: we report the honest clip conversion (**0%**,
+  `data_confidence="low"`) and demonstrate the correlation on a comparable window (`demo_conversion.py`).
+  The 24 real sales still power day-level KPIs (GMV ₹44,920, basket, peak hour) via `pos_day_metrics`.
 
 ## Footfall (entry/exit)
 
@@ -79,11 +81,19 @@
 - A `ZONE_DWELL` event is emitted **every 30s** of continuous presence in a zone (see [[EVENT_SCHEMA]]).
 - Report per-zone visitor counts and avg/total dwell (feeds the heatmap).
 
-## Billing queue & abandonment
-- **queue_depth:** number of visitors in the billing zone at the moment a visitor joins
-  (set in `metadata.queue_depth` on `BILLING_QUEUE_JOIN`).
-- **Abandonment:** `BILLING_QUEUE_ABANDON` when a visitor leaves the billing zone **without** a
-  POS transaction following (per the correlation rule). **abandonment rate** = abandons ÷ billing-zone sessions.
+## Billing queue & abandonment (Slice 2.5, ADR-0012)
+- **`BILLING_QUEUE_JOIN`:** emitted when a **non-staff** visitor enters the checkout zone on CAM5
+  (`BillingTracker`, driven off the CAM5 `ZONE_ENTER`). **queue_depth** = number of customers in the
+  checkout zone *including the joiner* (set in `metadata.queue_depth`). Staff are excluded from the queue.
+- **`BILLING_QUEUE_ABANDON`:** **derived** in `conversion.py` (not the detector — it needs POS): a billing
+  visitor with **no** POS transaction in the correlation window. **abandonment rate** = abandons ÷
+  billing-zone customers.
+- **Staff at the per-event vs visitor level:** a CAM5 track that dips below the staff-darkness threshold can
+  emit a JOIN with `is_staff=false`, but if the visitor is **overall staff** (any event flagged) the
+  conversion step excludes them — so staff never pollute the billing/customer counts.
+- **Honest clip result:** customers browse CAM2, none reach checkout → **0 billing customers, conversion 0%**
+  with `data_confidence="low"` (the window mismatch). The mechanism is demonstrated on a comparable window
+  (`scripts/demo_conversion.py`, `POS_DEMO_ALIGNMENT`).
 
 ## Heatmap
 - Per-zone **visit frequency + average dwell**, **normalised 0–100** for grid rendering.
@@ -110,6 +120,9 @@
 | `staff_darkness_threshold` | mean dark-uniform score ≥ ⇒ `is_staff` (ADR-0009) | 0.50 |
 | `staff_dark_v_max` | HSV Value (0–255) ≤ ⇒ a pixel is "dark"/near-black | 70 |
 | `staff_presence_fallback` | also flag long-present tracks as staff (off by default) | false |
+| `pos_correlation_window_ms` | billing-zone-before-a-sale window for "converted" (ADR-0012) | 300000 (5 min) |
+| `conversion_low_sample_threshold` | < N unique customers ⇒ `data_confidence="low"` | 20 |
+| `store_timezone` | tz for POS `order_date`+`order_time` → UTC | Asia/Kolkata |
 
 All thresholds via environment variables (no hardcoding). See [[EVENT_SCHEMA]] for how these
 become events and [[API_SPEC]] for how they surface.

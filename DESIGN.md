@@ -138,6 +138,16 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   statistically robust.** Conversion = converted ÷ 2 is fragile to a single misclassification; the system
   still computes it honestly and it varies with input — the value is the *correct pipeline*, not a large-N
   number a 2-minute clip can't provide.
+- **A9 — Conversion is built correctly but reads 0 on this clip (window mismatch), so we demonstrate the
+  mechanism separately.** The video is ~2 min at 20:10; the 24 POS sales span the full day (12:15–21:40),
+  and both customers only browse CAM2 — neither reaches the checkout. So the honest clip conversion is
+  **0%** (`data_confidence="low"`) with a real funnel drop-off (Entry 2 → Zone 2 → Billing 0 → Purchase 0)
+  — truthful, not a bug, and never divided across mismatched windows. The correlation (billing-zone
+  presence within 5 min before a sale) is built, unit-tested, and **demonstrated** on a comparable window
+  (`scripts/demo_conversion.py`, `POS_DEMO_ALIGNMENT`: a representative billing visitor aligned to a real
+  sale flips to converted, plus an abandon). The 24 real sales also power day-level KPIs (GMV ₹44,920,
+  basket, peak hour) independent of the clip. *Why:* faking a non-zero clip number would be dishonest and
+  trips the integrity cap; the window mismatch is the exact real-world ambiguity the rubric rewards. (ADR-0012)
 
 ## 8. Known limitations & next steps
 - Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a

@@ -20,6 +20,7 @@ from shelfsense_common.contracts.events import (
     TrackUpdated,
     make_event,
 )
+from shelfsense_common.contracts.pos import Transaction
 from shelfsense_common.contracts.zones import (
     STORE,
     CameraConfig,
@@ -35,6 +36,7 @@ __all__ = [
     "BehaviorEvent",
     "BehaviorEventType",
     "EventMetadata",
+    "Transaction",
     "Event",
     "EventType",
     "make_event",

@@ -54,8 +54,11 @@
   off-floor mirror/display phantoms on CAM5 (ADR-0010, **317 dropped**); the **entrance camera counts
   footfall only**, visitors from CAM1/2/5 (ADR-0011). JSONL export now truncates per pass.
   **Validated: 5 unique = 2 customers + 3 staff** (customers exact). 52 tests pass; ruff clean.
-- ⬜ **Slice 2.5 — Billing queue + POS.** `BILLING_QUEUE_JOIN`/`ABANDON` + `queue_depth`; POS
-  correlation (5-min billing-zone window → converted). See [[BUSINESS_RULES]].
+- ✅ **Slice 2.5 — Billing queue + POS correlation (ADR-0012).** `BillingTracker` emits
+  `BILLING_QUEUE_JOIN`+`queue_depth` on CAM5; pure POS loader (CSV→**24 txns**, IST→UTC, GMV ₹44,920) +
+  `correlate_conversions` (5-min rule, converted/abandon, `data_confidence`) + `pos_day_metrics` — all in
+  `common` so 2.6's API reuses them. **Honest clip: conversion 0%** (browsers only, window mismatch);
+  `demo_conversion.py` shows the flip against a real sale. 69 tests pass; ruff clean.
 - ⬜ **Slice 2.6 — API ingest + core metrics.** `POST /events/ingest` (idempotent/dedup/partial/≤500);
   `GET /stores/{id}/metrics` + `/funnel` (session-based, no double-count). Retire old `/api/v1/*`.
 - ⬜ **Slice 2.7 — heatmap + anomalies + health.** `/heatmap` (normalised, data_confidence),
