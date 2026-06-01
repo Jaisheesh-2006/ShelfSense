@@ -6,6 +6,7 @@ store's actual zones, not hand-drawn guesses (see DECISIONS ADR-0004 / PD-4). Fo
 entrance camera defines the footfall counting line (pixel coords, to be calibrated on a CAM 3
 frame in Phase 2 — defaults below are placeholders flagged as such).
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

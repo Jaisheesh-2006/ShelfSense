@@ -196,6 +196,17 @@ wiki (`STATE.md` + affected docs) and suggest tests.
 
 Do not generate large amounts of code without first presenting a plan. Think first.
 
+### Per-slice rituals (always do these)
+- **Document data-forced limitations under an `## Assumptions` heading in `DESIGN.md`.** Whenever the
+  real data forces an interpretation or we hit a limitation (e.g. CCTV clips showing ~no entry/exit, so
+  "visitor" = distinct in-store person), state it explicitly there — never bury it. Give the assumption,
+  the why, and the impact. Surfacing limits as assumptions reads as judgment, not oversight.
+- **After finishing a slice's coding, give a short problems-and-decisions retro in chat** (not a file):
+  what friction/dead-ends we hit and what decision resolved each. The ADR log in `DECISIONS.md` still
+  records the decisions themselves; the retro is conversational and additional.
+- Frame **5 interview Q&A** for the slice in `INTERVIEW_QA.md`; keep `DESIGN.md`/`CHOICES.md` in sync;
+  add a `# PROMPT` block (Task/Context/Constraints/Output) to every new test file.
+
 ---
 
 ## 11. Continuous self-review

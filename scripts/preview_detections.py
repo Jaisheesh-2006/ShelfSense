@@ -8,6 +8,7 @@ Usage:
     python scripts/preview_detections.py            # CAM 3, a few frames
     python scripts/preview_detections.py "CAM 1"    # a different camera clip
 """
+
 from __future__ import annotations
 
 import sys
@@ -51,8 +52,15 @@ def main() -> None:
                 p1 = (int(b.x), int(b.y))
                 p2 = (int(b.x + b.w), int(b.y + b.h))
                 cv2.rectangle(img, p1, p2, GREEN, 2)
-                cv2.putText(img, f"{d.confidence:.2f}", (p1[0], p1[1] - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, GREEN, 2)
+                cv2.putText(
+                    img,
+                    f"{d.confidence:.2f}",
+                    (p1[0], p1[1] - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    GREEN,
+                    2,
+                )
             if line is not None:
                 cv2.line(img, (int(line.x1), int(line.y1)), (int(line.x2), int(line.y2)), CYAN, 3)
             out_path = OUT / f"{clip_name.replace(' ', '_')}_det_{int(frac * 100):02d}pct.jpg"

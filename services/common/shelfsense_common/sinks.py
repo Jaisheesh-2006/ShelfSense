@@ -8,6 +8,7 @@ gives durability and exact replay without the operational weight of Kafka).
 JSON array so the file is append-only, crash-safe (a partial last line is the worst case), and
 streamable line-by-line on ingest.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -9,6 +9,7 @@ Usage:
         for frame in src.frames():
             ...  # frame.image is a BGR ndarray, frame.ts_ms is source media time
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -34,9 +35,9 @@ def compute_stride(source_fps: float, target_fps: float) -> int:
 class Frame:
     """One sampled frame."""
 
-    index: int          # frame position in the source clip
-    ts_ms: int          # source media time in milliseconds (index / fps)
-    image: np.ndarray   # BGR pixels (OpenCV convention)
+    index: int  # frame position in the source clip
+    ts_ms: int  # source media time in milliseconds (index / fps)
+    image: np.ndarray  # BGR pixels (OpenCV convention)
 
 
 class VideoFrameSource:

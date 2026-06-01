@@ -4,6 +4,7 @@ Responsibility (Phase 2): consume `detection.created`, associate detections into
 ByteTrack, map each track to a store zone (entrance line-crossing on CAM 3), and emit
 `track.updated`. For now it boots, logs, and heartbeats. Real tracking lands in Phase 2.
 """
+
 from __future__ import annotations
 
 from shelfsense_common.config import get_settings

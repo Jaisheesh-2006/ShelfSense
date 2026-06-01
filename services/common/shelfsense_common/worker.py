@@ -3,6 +3,7 @@
 Phase 1 uses this for heartbeat scaffolding. Phase 2 services replace the `tick` callback with
 real work (read frames / consume events) while keeping the same graceful-shutdown behaviour.
 """
+
 from __future__ import annotations
 
 import signal

@@ -38,11 +38,16 @@
   detector. **Integrity catch (ADR-0006):** an interim line on the right corridor counted mall pass-by as
   "3/3"; user review caught it → reverted to the real centre-left door → honest **0 crossings** (shoppers
   already inside). Drove **ADR-0007** (unique visitors = distinct in-store people). 26 tests pass; ruff clean.
-- ⬜ **Slice 2.3 — Visitor registry + zones + dwell.** Track all customer cams; assign a `visitor_id` per
-  customer on **first detection** (ADR-0007 — the unique-visitor basis), per-camera for now. Map tracks to
-  zones; emit `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30s).
-- ⬜ **Slice 2.4 — Re-ID + edge cases.** Cross-camera dedup + `REENTRY` (no double-count), `is_staff`
-  classification, group-entry (count individuals), confidence calibration (flag low-conf, don't drop).
+- ✅ **Slice 2.3 — Visitor registry + zones + dwell.** Tracks all customer cams; `VisitorRegistry` assigns a
+  `visitor_id` per customer on first detection (ADR-0007); `ZoneTracker` (pure) emits `ZONE_ENTER` (after
+  `min_zone_dwell`) / `ZONE_DWELL` (30s) / `ZONE_EXIT` (total dwell). CrossingDetector refactored to use the
+  registry (single id source). **Validated:** 163 events on real clips, **64 zone-visitors** (per-camera,
+  pre Re-ID), dwell 2.1–139.6s. 36 tests pass; ruff clean.
+- ✅ **Slice 2.4 — Re-ID + edge cases.** Appearance Re-ID (HSV histogram + `ReIDGallery`, ADR-0008) gives
+  cross-camera-deduped global `visitor_id` + `REENTRY`; tuned ByteTrack (`track_buffer=150`) cuts
+  fragmentation; `is_staff` by presence heuristic; groups counted as individuals; confidence carried.
+  **Validated vs ground truth (7 on CAM1/2/3):** 53 per-camera → tuned 44 → **9 unique** (live, 0.55).
+  `scripts/calibrate_reid.py` for threshold tuning. 40 tests pass; ruff clean. (Approximate — DESIGN A5.)
 - ⬜ **Slice 2.5 — Billing queue + POS.** `BILLING_QUEUE_JOIN`/`ABANDON` + `queue_depth`; POS
   correlation (5-min billing-zone window → converted). See [[BUSINESS_RULES]].
 - ⬜ **Slice 2.6 — API ingest + core metrics.** `POST /events/ingest` (idempotent/dedup/partial/≤500);

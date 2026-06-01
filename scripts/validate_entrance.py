@@ -9,6 +9,7 @@ compare. If the counts are off, nudge the line in zones.py or the fps/confirm-fr
 Usage:
     python scripts/validate_entrance.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -41,8 +42,9 @@ def _draw(img, tracks, line, banner: str | None):
         fx, fy = (int(v) for v in t.foot_point)
         cv2.rectangle(img, p1, p2, GREEN, 2)
         cv2.circle(img, (fx, fy), 5, RED, -1)  # foot-point: what the line test uses
-        cv2.putText(img, f"id{t.track_id}", (p1[0], p1[1] - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, GREEN, 2)
+        cv2.putText(
+            img, f"id{t.track_id}", (p1[0], p1[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, GREEN, 2
+        )
     cv2.line(img, (int(line.x1), int(line.y1)), (int(line.x2), int(line.y2)), CYAN, 3)
     if banner:
         cv2.putText(img, banner, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, RED, 3)
@@ -55,7 +57,9 @@ def main() -> None:
     line = cam.entrance_line
 
     tracker = PersonTracker(
-        settings.yolo_model, settings.detection_confidence, settings.person_class_id,
+        settings.yolo_model,
+        settings.detection_confidence,
+        settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
     )
     crossing = CrossingDetector(line, confirm_frames=settings.crossing_confirm_frames)
@@ -71,9 +75,11 @@ def main() -> None:
     with VideoFrameSource(clip_path, sample_fps=settings.tracker_sample_fps) as src:
         total = src.total_frames
         context_at = {int(total * f) for f in (0.2, 0.4, 0.6, 0.8)}
-        print(f"{cam.camera_id}: {src.width}x{src.height} @ {src.source_fps:.2f}fps, "
-              f"sampling {settings.tracker_sample_fps}fps, "
-              f"line={line.x1, line.y1}->{line.x2, line.y2}, conf={settings.detection_confidence}")
+        print(
+            f"{cam.camera_id}: {src.width}x{src.height} @ {src.source_fps:.2f}fps, "
+            f"sampling {settings.tracker_sample_fps}fps, "
+            f"line={line.x1, line.y1}->{line.x2, line.y2}, conf={settings.detection_confidence}"
+        )
         for frame in src.frames():
             if backdrop is None:
                 backdrop = frame.image.copy()  # first frame, as a map background
@@ -90,9 +96,7 @@ def main() -> None:
                 kind = c.event_type.value
                 entries += kind == "ENTRY"
                 exits += kind == "EXIT"
-                events.append(
-                    f"  t={c.ts_ms/1000:6.1f}s  {kind:5}  {c.visitor_id}  (track {c.track_id})"
-                )
+                events.append(f"  t={c.ts_ms / 1000:6.1f}s  {kind:5}  (track {c.track_id})")
 
             near_ctx = any(abs(frame.index - c) < src.stride for c in context_at)
             should_save = bool(crosses) or near_ctx

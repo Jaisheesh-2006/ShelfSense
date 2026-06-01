@@ -14,6 +14,7 @@ Design notes:
 - `zone_id` is null for ENTRY/EXIT (the threshold has no zone); `dwell_ms` is 0 for instantaneous
   events. Low-confidence detections are flagged via `confidence`, never silently dropped.
 """
+
 from __future__ import annotations
 
 import uuid

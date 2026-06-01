@@ -8,6 +8,7 @@ Usage:
     python scripts/calibrate_entrance.py                 # use the line currently in zones.py
     python scripts/calibrate_entrance.py 300 250 1250 700  # try a candidate line x1 y1 x2 y2
 """
+
 from __future__ import annotations
 
 import sys
@@ -52,8 +53,10 @@ def draw_grid(img) -> None:
 def main() -> None:
     line = candidate_line()
     with VideoFrameSource(CAM3, sample_fps=5.0) as src:
-        print(f"CAM3: {src.width}x{src.height} @ {src.source_fps:.2f}fps, "
-              f"{src.total_frames} frames, stride={src.stride}")
+        print(
+            f"CAM3: {src.width}x{src.height} @ {src.source_fps:.2f}fps, "
+            f"{src.total_frames} frames, stride={src.stride}"
+        )
         frame = src.grab_frame(0.5)
 
     img = frame.image.copy()

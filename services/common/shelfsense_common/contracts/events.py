@@ -9,6 +9,7 @@ Design notes:
 - Timestamps are UTC. `ts_ms` on payloads is the source media time (epoch millis) so events
   remain meaningful independent of wall-clock processing time (important for replay/idempotency).
 """
+
 from __future__ import annotations
 
 import uuid

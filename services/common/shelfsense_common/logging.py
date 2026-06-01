@@ -9,6 +9,7 @@ Usage:
 Logs are JSON lines with a consistent shape (timestamp, level, service, event, + context).
 Bind a correlation id once and it rides along: `log = log.bind(correlation_id=cid)`.
 """
+
 from __future__ import annotations
 
 import logging

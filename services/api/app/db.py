@@ -3,6 +3,7 @@
 Persistence target for analytics output and the read surface for the API. Tables are created on
 startup (create_all) for the challenge; a real deployment would use Alembic migrations.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator

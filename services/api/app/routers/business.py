@@ -4,6 +4,7 @@ Every value is computed from the database — never hardcoded. When analytics ha
 data the endpoints return honest zeros/empties (not fabricated numbers), and become meaningful as
 the pipeline fills the tables. Metric definitions: docs/wiki/BUSINESS_RULES.md.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
@@ -52,7 +53,9 @@ def footfall_summary() -> FootfallSummary:
         total = s.scalar(select(func.count()).select_from(VisitSession)) or 0
         staff = (
             s.scalar(
-                select(func.count()).select_from(VisitSession).where(VisitSession.is_staff.is_(True))
+                select(func.count())
+                .select_from(VisitSession)
+                .where(VisitSession.is_staff.is_(True))
             )
             or 0
         )
@@ -96,7 +99,9 @@ def conversion() -> ConversionResponse:
     with get_session() as s:
         footfall = (
             s.scalar(
-                select(func.count()).select_from(VisitSession).where(VisitSession.is_staff.is_(False))
+                select(func.count())
+                .select_from(VisitSession)
+                .where(VisitSession.is_staff.is_(False))
             )
             or 0
         )
@@ -118,7 +123,10 @@ def list_sessions(limit: int = Query(50, le=500), offset: int = 0) -> dict[str, 
     with get_session() as s:
         total = s.scalar(select(func.count()).select_from(VisitSession)) or 0
         rows = s.scalars(
-            select(VisitSession).order_by(VisitSession.started_ms.desc()).limit(limit).offset(offset)
+            select(VisitSession)
+            .order_by(VisitSession.started_ms.desc())
+            .limit(limit)
+            .offset(offset)
         ).all()
     items = [
         {

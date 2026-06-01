@@ -3,6 +3,7 @@
 Read surface for business insights + the gate-critical `/metrics`, `/healthz`, `/readyz`.
 Business logic lives in routers/services, not here. Run: `uvicorn app.main:app`.
 """
+
 from __future__ import annotations
 
 import time

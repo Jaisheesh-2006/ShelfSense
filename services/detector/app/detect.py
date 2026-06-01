@@ -4,6 +4,7 @@
 box-filtering logic is a separate pure function, `boxes_to_detections`, so it can be tested
 offline without a model or GPU.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable

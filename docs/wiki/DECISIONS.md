@@ -155,3 +155,32 @@ What changes vs. our earlier design:
 - **Rationale:** makes the North Star computable and honest on the real data; aligns with
   [[SPEC]]/[[EVENT_SCHEMA]] ("`visitor_id` unique per visit"); avoids both the divide-by-zero and the
   fabricate-entries traps. Implemented starting Slice 2.3 (visitor registry across customer cameras).
+
+---
+
+## ADR-0008 — Re-ID via a lightweight appearance signature, not a dedicated model (Slice 2.4)
+- **Date:** 2026-06-01 · **Status:** Accepted (user chose Option 1)
+- **Context:** ADR-0007 needs cross-camera de-dup so one shopper = one `visitor_id`. We had two
+  options: (a) a cheap appearance signature (colour histogram) + nearest-neighbour matching, or
+  (b) a dedicated Re-ID model (OSNet/torchreid embeddings).
+- **Decision:** **(a) lightweight appearance Re-ID.** A per-track **HSV colour-histogram** signature
+  (`reid.py`), cosine-distance matched against a `ReIDGallery` of known visitors; match within
+  `reid_max_distance` → reuse that `visitor_id` (merge), else mint new. A re-match after an absence
+  gap emits `REENTRY`. The matching logic is **pure and unit-tested**; only signature extraction
+  touches pixels.
+- **Alternatives:** (b) dedicated Re-ID model — more accurate but another heavy model to bake in,
+  more image size + gate risk, and overkill when the rubric rewards a runnable system over SOTA
+  accuracy on a 2-minute clip. Rejected for v1.
+- **Trade-offs / honest limitation:** colour histograms are weak Re-ID features — on evening footage
+  with many **dark-clothed** shoppers and different camera angles they can **over-merge** (two
+  similar-looking people → one id → undercount) or **under-merge** (same person, different lighting →
+  two ids → overcount). We tune `reid_max_distance` empirically and **report the real effect**; the
+  swap to model embeddings is a one-file change (`appearance_signature`) if accuracy must improve.
+- **Rationale:** offline-safe, CPU-only, protects the gate, and good enough to *meaningfully reduce*
+  the per-camera over-count — which is the goal. Documented as an Assumption in DESIGN.md.
+- **Calibration result (user ground truth = 7 people on CAM1/2/3):** the over-count was dominated by
+  **ByteTrack fragmentation** (one shopper → ~8 track ids), not Re-ID error. Fix order that worked:
+  (1) **tuned ByteTrack** (`track_buffer=150`, `new_track_thresh=0.5`) cut raw tracks 53 → 44;
+  (2) Re-ID at `reid_max_distance=0.55` (found via `scripts/calibrate_reid.py` sweeping thresholds vs 7)
+  brought the **live pipeline to 9 unique** (offline sweep hit 7 with full-track signatures; the live
+  pipeline resolves at ~2s so lands at 9). Threshold is **clip-tuned**; re-validate on new footage.

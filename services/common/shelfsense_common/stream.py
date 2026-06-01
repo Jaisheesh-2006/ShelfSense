@@ -7,6 +7,7 @@ so services that don't stream (e.g. the API) don't need it installed. Streaming 
 Events are keyed (e.g. by camera_id) so all events for one key land on the same partition and stay
 ordered — important for tracking and idempotent downstream processing.
 """
+
 from __future__ import annotations
 
 from types import TracebackType

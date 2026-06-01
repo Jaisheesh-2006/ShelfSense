@@ -13,9 +13,11 @@ Tracking is stateful per video sequence: ByteTrack carries Kalman/association st
 Process one camera's frames in order, then call `reset()` before a different camera so identities
 from one clip never leak into another.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -80,7 +82,14 @@ class PersonTracker:
         self._model = YOLO(model_path)
         self.confidence = confidence
         self.person_class_id = person_class_id
-        self.tracker_cfg = tracker_cfg
+        self.tracker_cfg = self._resolve_tracker_cfg(tracker_cfg)
+
+    @staticmethod
+    def _resolve_tracker_cfg(cfg: str) -> str:
+        """Use a tracker yaml shipped next to this module (e.g. our tuned one) if it exists; else
+        pass the name through to Ultralytics' built-ins (e.g. 'bytetrack.yaml')."""
+        local = Path(__file__).parent / "trackers" / cfg
+        return str(local) if local.exists() else cfg
 
     def update(self, image: np.ndarray) -> list[Track]:
         """Feed the next frame of the current camera sequence; return its tracks."""

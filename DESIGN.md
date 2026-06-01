@@ -91,6 +91,25 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   visitor counts as converted if they were in the billing zone within 5 minutes before a POS transaction.
 - **A3 — Clip vs full-day POS mismatch is handled by windowing, not naive division.** Footfall/sessions are
   computed on a comparable window and any extrapolation is documented, never `full-day txns ÷ clip footfall`.
+- **A4 — Zone names are our assumption, not given by the problem statement.** No zone list or
+  `store_layout.json` was provided, so we named the zones ourselves from the store floor plan and the camera
+  roles: `entrance`, `skincare_aisle`, `makeup_aisle`, `foh_center`, `checkout`, `accessories`, `stockroom`
+  (the last is staff-only and excluded). For v1 each camera maps to one primary zone — CAM3 `entrance`,
+  CAM1 `skincare_aisle`, CAM2 `makeup_aisle`, CAM5 `checkout` (CAM4 `stockroom`); the others are reserved
+  for finer sub-zones later. *Why:* the labels are configuration in `zones.py`, not hardcoded logic, so they
+  can be renamed/extended without code changes if a canonical layout is supplied. (See [[DECISIONS]] PD-4.)
+- **A5 — Unique-visitor count is approximate (lightweight Re-ID + tuned tracking), calibrated to the one
+  available ground truth.** With no identity data and an offline CPU gate, we de-duplicate by appearance
+  **colour-histogram** signature, not a trained Re-ID model (ADR-0008). Validated against a user count of
+  **~7 people on CAM1/2/3**: the raw per-camera pipeline found **53** tracks — over-count dominated by
+  **ByteTrack fragmentation** (one shopper → ~8 ids behind shelves), not Re-ID error. A **tuned tracker**
+  (`track_buffer=150`) cut that to 44, and Re-ID at the calibrated `reid_max_distance=0.55` brings the live
+  pipeline to **9 unique** (close to 7). *Caveats:* (i) the threshold is **tuned to this clip** and should
+  be re-validated on new footage; (ii) colour histograms are weak features (dark clothing, varied angles),
+  so look-alikes can still merge and the same person across very different views may not — the count is
+  *meaningfully de-inflated, not exact*; (iii) `is_staff` is a **presence heuristic** (continuous presence
+  ≥ threshold ⇒ staff), not uniform recognition. The signature and threshold are swappable config/one
+  function if higher accuracy is later required.
 
 ## 8. Known limitations & next steps
 - The entry line is a per-camera calibration validated against the real video; robust to a fixed camera,

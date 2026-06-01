@@ -12,6 +12,7 @@
 #     rejected; an offset datetime is converted to UTC; out-of-range confidence is rejected;
 #     model_dump_json round-trips the enum value and a UTC timestamp.
 """Unit tests for the prescribed BehaviorEvent schema rules."""
+
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest

@@ -56,6 +56,8 @@ never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the convers
 
 ## Status
 Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
-`shelfsense_common/contracts/behavior.py` (Slice 2.2). `ENTRY`/`EXIT` are **emitted from real
-CAM3 footage** to JSONL via the detector. `ZONE_*` land in Slice 2.3; billing/`REENTRY` in 2.4–2.5.
-Validators enforce: tz-aware UTC timestamp, and `zone_id=None` for ENTRY/EXIT.
+`shelfsense_common/contracts/behavior.py`. Emitted from real footage to JSONL by the detector:
+`ENTRY`/`EXIT` on the CAM3 door (2.2); `ZONE_ENTER`/`ZONE_DWELL`/`ZONE_EXIT` on all customer cameras
+(2.3); `REENTRY` + `is_staff` flag + **cross-camera de-duplicated** `visitor_id` via appearance Re-ID
+(2.4, ADR-0008). `BILLING_QUEUE_JOIN`/`ABANDON` come in Slice 2.5. Validators enforce a tz-aware UTC
+timestamp and `zone_id=None` for ENTRY/EXIT.

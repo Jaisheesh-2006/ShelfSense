@@ -11,6 +11,7 @@
 #   - Tests: two events produce two valid JSON lines preserving event_type/visitor_id; the sink
 #     creates a missing parent directory; appending reopens and adds without truncating.
 """Unit tests for JsonlEventSink."""
+
 import json
 from datetime import UTC, datetime
 

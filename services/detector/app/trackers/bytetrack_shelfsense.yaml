@@ -1,0 +1,19 @@
+# Tuned ByteTrack for ShelfSense (Slice 2.4).
+#
+# Problem: the default tracker fragments ONE shopper into many track ids — a person occluded behind a
+# shelf for a few seconds reappears as a new id, massively over-counting visitors (~7.7x vs ground
+# truth). We tune two levers to keep a person on a single id for longer:
+#   - track_buffer: how many frames a lost track is kept "alive" (Kalman-predicted) before deletion.
+#     At 10 fps, 150 frames ≈ 15 s — long enough to survive typical shelf/aisle occlusion so the
+#     person re-associates to the SAME id instead of spawning a new one.
+#   - new_track_thresh: minimum confidence to START a new track. Raising it stops weak/spurious
+#     detections from birthing fresh ids (another fragmentation source).
+# The remaining over-count (large movements ByteTrack's IoU association can't bridge) is handled by
+# appearance Re-ID downstream (reid.py). See DECISIONS ADR-0008.
+tracker_type: bytetrack
+track_high_thresh: 0.25 # detections above this drive first-round association
+track_low_thresh: 0.10 # low-score detections used in ByteTrack's second association round
+new_track_thresh: 0.50 # higher than default (0.25): do not spawn a new id from weak detections
+track_buffer: 150 # frames to keep a lost track before deletion (~15 s @ 10 fps) — bridges occlusion
+match_thresh: 0.80 # IoU association threshold
+fuse_score: true # fuse detection confidence into association cost

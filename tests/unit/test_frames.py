@@ -12,6 +12,7 @@
 #   - Added the divide-by-zero and target>source guard cases the first draft omitted.
 #   - Asserted the exact strides for our actual clips (6 and 5) rather than generic numbers.
 """Unit tests for the detector frame sampling logic (pure, no video needed)."""
+
 import numpy as np
 from app.frames import Frame, compute_stride
 

@@ -6,6 +6,7 @@ so we can record real video specs in GROUND_TRUTH.md.
 
 Usage:  python scripts/extract_frames.py
 """
+
 from __future__ import annotations
 
 from pathlib import Path

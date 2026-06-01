@@ -1,24 +1,28 @@
 """detector service.
 
-Slice 2.2 — footfall via the entrance camera. Runs YOLO + ByteTrack on the CAM3 clip, watches
-each stable track cross the calibrated entrance line, and emits prescribed `ENTRY`/`EXIT`
-behavioural events (EVENT_SCHEMA) to a JSONL sink. Clips are finite recordings, so the service
-processes the clip once and then idles healthy.
+Slice 2.4 — Re-ID + edge cases. Runs YOLO + ByteTrack on every customer camera (CAM1/2/3/5; CAM4 is
+the staff back room and is skipped). For each tracked person it:
+  - builds a lightweight appearance signature and resolves a GLOBAL `visitor_id` via the gallery
+    (the same shopper across cameras / returning collapses to ONE id — ADR-0007/0008),
+  - emits ZONE_ENTER / ZONE_DWELL / ZONE_EXIT for the camera's primary zone (ZoneTracker),
+  - emits ENTRY / EXIT on the entrance line (CAM3) and REENTRY when a known visitor returns,
+  - flags `is_staff` for people present beyond a long threshold (e.g. the cashier).
 
-Scope note: only the entrance camera is processed here — footfall is counted at the door, not on
-the floor. Zone events on the product/checkout cameras (CAM1/CAM2/CAM5) and Re-ID/staff land in
-Slices 2.3–2.4. The message broker was dropped (ADR-0005): events go to JSONL, ingested by the API
-via POST in Slice 2.6.
+All events are the prescribed flat `BehaviorEvent` written to a JSONL sink (no broker, ADR-0005).
+Clips are finite recordings, so the service processes them once and then idles healthy.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
 
+import numpy as np
 from shelfsense_common.config import Settings, get_settings
 from shelfsense_common.contracts import (
     STORE,
     BehaviorEvent,
+    BehaviorEventType,
     CameraConfig,
     EventMetadata,
 )
@@ -28,95 +32,171 @@ from shelfsense_common.worker import GracefulRunner
 
 from app.crossing import CrossingDetector
 from app.frames import VideoFrameSource
+from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
 from app.track import PersonTracker
+from app.visits import VisitorRegistry
+from app.zone_tracker import ZoneEvent, ZoneTracker
 
 SERVICE = "detector"
 
 
-def process_entrance(
+def process_camera(
     camera: CameraConfig,
     clip_path: Path,
     tracker: PersonTracker,
+    registry: VisitorRegistry,
     sink: JsonlEventSink,
     settings: Settings,
     log,
-) -> tuple[int, int, int]:
-    """Track people across the entrance clip and emit ENTRY/EXIT events on line crossings.
-
-    Returns (frames_processed, entries, exits).
-    """
-    if camera.entrance_line is None:
-        raise ValueError(f"{camera.camera_id} has no calibrated entrance line")
-
-    crossing = CrossingDetector(
-        camera.entrance_line, confirm_frames=settings.crossing_confirm_frames
-    )
+    emitted_visitors: set[str],
+) -> dict[str, int]:
+    """Track one camera; emit zone + entrance + reentry events with global (Re-ID'd) visitor ids."""
     clip_start = settings.clip_start_dt
-    frames_done = entries = exits = 0
-
-    tracker.reset()  # fresh identities for this camera sequence
-    with VideoFrameSource(clip_path, sample_fps=settings.tracker_sample_fps) as src:
-        log.info("camera_open", camera=camera.camera_id, fps=src.source_fps, stride=src.stride)
-        for frame in src.frames():
-            for track in tracker.update(frame.image):
-                fx, fy = track.foot_point
-                for cross in crossing.update(track.track_id, fx, fy, frame.ts_ms, track.confidence):
-                    event = BehaviorEvent(
-                        store_id=STORE.store_id,
-                        camera_id=camera.camera_id,
-                        visitor_id=cross.visitor_id,
-                        event_type=cross.event_type,
-                        timestamp=clip_start + timedelta(milliseconds=cross.ts_ms),
-                        zone_id=None,
-                        dwell_ms=0,
-                        is_staff=False,
-                        confidence=cross.confidence,
-                        metadata=EventMetadata(session_seq=cross.session_seq),
-                    )
-                    sink.write(event)
-                    if cross.event_type.value == "ENTRY":
-                        entries += 1
-                    else:
-                        exits += 1
-                    log.info(
-                        "behavior_event",
-                        event_type=event.event_type.value,
-                        visitor_id=event.visitor_id,
-                        track_id=cross.track_id,
-                        ts_ms=cross.ts_ms,
-                        confidence=round(event.confidence, 3),
-                    )
-            frames_done += 1
-            if settings.detector_max_frames and frames_done >= settings.detector_max_frames:
-                break
-
-    log.info(
-        "camera_processed",
-        camera=camera.camera_id,
-        frames=frames_done,
-        entries=entries,
-        exits=exits,
+    zone_tracker = ZoneTracker(
+        zone=camera.primary_zone.value,
+        min_zone_dwell_ms=settings.min_zone_dwell_ms,
+        dwell_interval_ms=settings.zone_dwell_interval_ms,
+        exit_grace_ms=settings.zone_exit_grace_ms,
     )
-    return frames_done, entries, exits
+    crossing = (
+        CrossingDetector(camera.entrance_line, confirm_frames=settings.crossing_confirm_frames)
+        if camera.entrance_line is not None
+        else None
+    )
+    counts = {"frames": 0, "entries": 0, "exits": 0, "zone": 0, "reentry": 0}
+    # Running appearance signature per track (sum of per-frame histograms) until resolved.
+    sig_sums: dict[int, np.ndarray] = {}
+
+    def accumulate_signature(track_id: int, image: np.ndarray, bbox) -> None:
+        if registry.is_resolved(camera.camera_id, track_id):
+            return  # already has a global id — no need to keep sampling appearance
+        sig = appearance_signature(image, int(bbox.x), int(bbox.y), int(bbox.w), int(bbox.h))
+        prev = sig_sums.get(track_id)
+        sig_sums[track_id] = sig if prev is None else prev + sig
+
+    def current_signature(track_id: int) -> np.ndarray:
+        vec = sig_sums.get(track_id)
+        if vec is None:
+            return np.zeros(SIGNATURE_LEN, dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        return vec / norm if norm > 0 else vec
+
+    def write_event(
+        visitor_id: str,
+        event_type: BehaviorEventType,
+        ts_ms: int,
+        confidence: float,
+        zone_id: str | None,
+        dwell_ms: int,
+        is_staff: bool,
+    ) -> None:
+        event = BehaviorEvent(
+            store_id=STORE.store_id,
+            camera_id=camera.camera_id,
+            visitor_id=visitor_id,
+            event_type=event_type,
+            timestamp=clip_start + timedelta(milliseconds=ts_ms),
+            zone_id=zone_id,
+            dwell_ms=dwell_ms,
+            is_staff=is_staff,
+            confidence=confidence,
+            metadata=EventMetadata(session_seq=registry.next_seq(visitor_id)),
+        )
+        sink.write(event)
+        emitted_visitors.add(visitor_id)
+        key = {
+            BehaviorEventType.ENTRY: "entries",
+            BehaviorEventType.EXIT: "exits",
+            BehaviorEventType.REENTRY: "reentry",
+        }.get(event_type, "zone")
+        counts[key] += 1
+
+    def emit(
+        track_id: int,
+        event_type: BehaviorEventType,
+        ts_ms: int,
+        confidence: float,
+        *,
+        zone_id: str | None,
+        dwell_ms: int,
+    ) -> None:
+        res = registry.resolve(camera.camera_id, track_id, current_signature(track_id), ts_ms)
+        if res.is_reentry:  # known visitor returning after an absence — flag before the main event
+            write_event(
+                res.visitor_id, BehaviorEventType.REENTRY, ts_ms, confidence, None, 0, False
+            )
+        is_staff = dwell_ms >= settings.staff_min_presence_ms
+        write_event(res.visitor_id, event_type, ts_ms, confidence, zone_id, dwell_ms, is_staff)
+
+    def emit_zone(ze: ZoneEvent) -> None:
+        emit(
+            ze.track_id,
+            ze.event_type,
+            ze.ts_ms,
+            ze.confidence,
+            zone_id=ze.zone,
+            dwell_ms=ze.dwell_ms,
+        )
+
+    tracker.reset()  # fresh per-camera track ids
+    last_ts = 0
+    with VideoFrameSource(clip_path, sample_fps=settings.tracker_sample_fps) as src:
+        log.info(
+            "camera_open",
+            camera=camera.camera_id,
+            zone=camera.primary_zone.value,
+            fps=src.source_fps,
+        )
+        for frame in src.frames():
+            last_ts = frame.ts_ms
+            for track in tracker.update(frame.image):
+                accumulate_signature(track.track_id, frame.image, track.bbox)
+                for ze in zone_tracker.observe(track.track_id, frame.ts_ms, track.confidence):
+                    emit_zone(ze)
+                if crossing is not None:
+                    fx, fy = track.foot_point
+                    for cross in crossing.update(
+                        track.track_id, fx, fy, frame.ts_ms, track.confidence
+                    ):
+                        emit(
+                            cross.track_id,
+                            cross.event_type,
+                            cross.ts_ms,
+                            cross.confidence,
+                            zone_id=None,
+                            dwell_ms=0,
+                        )
+            for ze in zone_tracker.sweep(frame.ts_ms):  # close tracks that have left the zone
+                emit_zone(ze)
+            counts["frames"] += 1
+            if settings.detector_max_frames and counts["frames"] >= settings.detector_max_frames:
+                break
+    for ze in zone_tracker.flush(last_ts):  # close anyone still present at clip end
+        emit_zone(ze)
+
+    log.info("camera_processed", camera=camera.camera_id, **counts)
+    return counts
 
 
-def run_once(settings: Settings, log) -> tuple[int, int, int]:
-    """Process the entrance clip once and write events. Returns (frames, entries, exits).
-
-    Separated from `main()` so dev/demo tooling can run a single pass without the idle loop.
-    """
+def run_once(settings: Settings, log) -> dict[str, int]:
+    """Process every customer camera once and write events. Returns aggregate counts."""
     cctv_dir = Path(settings.cctv_dir)
-    entrance = STORE.entrance_camera
-    if entrance is None:
-        raise RuntimeError("no entrance camera configured")
-
+    cameras = [c for c in STORE.cameras if c.is_customer_area]
+    allow = {
+        c.strip().upper().replace(" ", "")
+        for c in settings.enabled_cameras.split(",")
+        if c.strip()
+    }
+    if allow:  # optional filter (e.g. only the cameras a reviewer can ground-truth)
+        cameras = [c for c in cameras if c.camera_id in allow]
     log.info(
         "detector_boot",
         model=settings.yolo_model,
         confidence=settings.detection_confidence,
         tracker=settings.tracker_cfg,
         sample_fps=settings.tracker_sample_fps,
-        entrance_camera=entrance.camera_id,
+        reid_max_distance=settings.reid_max_distance,
+        cameras=[c.camera_id for c in cameras],
         events_path=settings.events_jsonl_path,
     )
 
@@ -126,16 +206,28 @@ def run_once(settings: Settings, log) -> tuple[int, int, int]:
         settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
     )
+    gallery = ReIDGallery(
+        max_distance=settings.reid_max_distance,
+        reentry_min_gap_ms=settings.reid_reentry_min_gap_ms,
+    )
+    registry = VisitorRegistry(gallery)
+    totals = {"frames": 0, "entries": 0, "exits": 0, "zone": 0, "reentry": 0}
+    emitted_visitors: set[str] = set()  # distinct GLOBAL visitors who produced an event
 
-    clip_path = cctv_dir / entrance.file
     with JsonlEventSink(settings.events_jsonl_path) as sink:
-        if not clip_path.exists():
-            log.warning("clip_missing", camera=entrance.camera_id, path=str(clip_path))
-            result = (0, 0, 0)
-        else:
-            result = process_entrance(entrance, clip_path, tracker, sink, settings, log)
-        log.info("detection_pass_complete")
-    return result
+        for camera in cameras:
+            clip_path = cctv_dir / camera.file
+            if not clip_path.exists():
+                log.warning("clip_missing", camera=camera.camera_id, path=str(clip_path))
+                continue
+            counts = process_camera(
+                camera, clip_path, tracker, registry, sink, settings, log, emitted_visitors
+            )
+            for key, value in counts.items():
+                totals[key] += value
+        # unique_visitors = distinct GLOBAL ids that produced an event (Re-ID-deduped).
+        log.info("detection_pass_complete", unique_visitors=len(emitted_visitors), **totals)
+    return {**totals, "unique_visitors": len(emitted_visitors)}
 
 
 def main() -> None:
@@ -145,7 +237,7 @@ def main() -> None:
 
     run_once(settings, log)
 
-    # Recorded clip is finite: idle (healthy) once processed instead of busy-reprocessing.
+    # Recorded clips are finite: idle (healthy) once processed instead of busy-reprocessing.
     GracefulRunner(SERVICE, interval_s=30.0).run(lambda i: log.info("idle", iteration=i))
 
 

@@ -12,6 +12,7 @@
 #   - Added the foot_point assertion and the empty-input case.
 #   - Used plain tuples so the test needs no model.
 """Unit tests for the pure detection-filtering logic (no model / GPU needed)."""
+
 from app.detect import boxes_to_detections
 
 PERSON = 0

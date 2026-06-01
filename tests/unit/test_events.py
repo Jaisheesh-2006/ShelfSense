@@ -13,6 +13,7 @@
 #   - Asserted the exact JSON keys the consumer relies on; added the auto-generated-id case.
 #   - NOTE: this envelope is internal; emitted events use the behavioural schema (ADR-0005).
 """Unit tests for event contracts: JSON serialization is the wire format on the stream."""
+
 import json
 
 from shelfsense_common.contracts import (

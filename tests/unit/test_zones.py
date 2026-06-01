@@ -13,6 +13,7 @@
 #   - Switched from hardcoded coordinates to the live STORE config.
 #   - Added the on-the-line (==0) boundary case.
 """Unit tests for the calibrated entrance line geometry (inside vs outside)."""
+
 from shelfsense_common.contracts import STORE, EntranceLine
 
 

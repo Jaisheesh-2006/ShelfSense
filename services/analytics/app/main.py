@@ -4,6 +4,7 @@ Responsibility (Phase 2): consume `track.updated`, build sessions, compute footf
 session-based funnel, dwell/zone engagement and anomalies; load the POS CSV for conversion; and
 persist metrics to PostgreSQL. For now it boots, logs, and heartbeats. Real analytics in Phase 2.
 """
+
 from __future__ import annotations
 
 from shelfsense_common.config import get_settings

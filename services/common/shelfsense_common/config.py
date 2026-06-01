@@ -4,6 +4,7 @@ All services import `get_settings()`. No hardcoded hosts/secrets/thresholds — 
 env var, documented in `.env.example`. Business thresholds live here and are mirrored in
 docs/wiki/BUSINESS_RULES.md.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -48,13 +49,14 @@ class Settings(BaseSettings):
     detection_confidence: float = 0.35  # validated on CAM3 corridor traffic (Slice 2.2)
     person_class_id: int = 0  # COCO 'person'
     cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
+    enabled_cameras: str = ""  # CSV of camera_ids to process (empty = all customer cameras)
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
     detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
 
     # --- Tracking / behavioural events (Slice 2.2) ---
     tracker_sample_fps: float = 10.0  # higher than detection fps: ByteTrack needs denser frames
-    tracker_cfg: str = "bytetrack.yaml"  # Ultralytics built-in tracker config
+    tracker_cfg: str = "bytetrack_shelfsense.yaml"  # tuned ByteTrack (less fragmentation)
     crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
     events_jsonl_path: str = "/data/events/behavior.jsonl"  # where the pipeline writes events
     # Clip wall-clock start (store-local), approx from the burnt-in CCTV overlay (~20:10 IST,
@@ -62,10 +64,20 @@ class Settings(BaseSettings):
     clip_start_iso: str = "2026-04-10T20:10:00+05:30"
 
     # --- Business-rule thresholds (see BUSINESS_RULES.md) ---
-    min_zone_dwell_ms: int = 2000
+    min_zone_dwell_ms: int = 2000  # min continuous presence before a zone visit is recorded
     min_engagement_dwell_ms: int = 3000
     session_timeout_ms: int = 30000
     reentry_window_ms: int = 120000
+    zone_dwell_interval_ms: int = 30000  # re-emit ZONE_DWELL every N ms of continuous presence
+    zone_exit_grace_ms: int = 2000  # absence beyond this ends a zone visit (ZONE_EXIT)
+
+    # --- Re-ID + staff (Slice 2.4) ---
+    # Max appearance (cosine) distance to call two tracks the same person. Calibrated against the
+    # ground-truth of 7 people on CAM1/2/3 (scripts/calibrate_reid.py): with the tuned tracker,
+    # 0.55 collapses 44 fragmented tracks to ~7 unique. Clip-tuned + approximate (see DESIGN A5).
+    reid_max_distance: float = 0.55
+    reid_reentry_min_gap_ms: int = 5000  # absence before a re-matched visitor counts as REENTRY
+    staff_min_presence_ms: int = 90000  # continuous presence above this => classified is_staff
 
     # --- API ---
     api_host: str = "0.0.0.0"

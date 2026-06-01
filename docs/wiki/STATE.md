@@ -4,15 +4,46 @@
 > next session resumes instantly. Keep it short and current; history lives in git, detail in
 > [[TASKS]]. This replaces the empty root `CURRENT_STATE.md`.
 >
-> Last updated: 2026-05-31.
+> Last updated: 2026-06-01.
 
 ## Current phase
 
-🟢 **Slice 2.2 done — ENTRY/EXIT mechanism built & validated.** Phase 1 + Slices 2.0/2.1/2.2 complete.
-Detector tracks (ByteTrack) on CAM3 and emits prescribed `ENTRY`/`EXIT` events to JSONL (no broker).
-Validation **caught and fixed an integrity bug** (a mall-corridor line counted pass-by traffic; reverted
-to the real door → honest 0 crossings on this clip, see ADR-0006) and the team **redefined unique
-visitors** as distinct in-store people (ADR-0007). Slice 2.3 (visitor registry + zones) next.
+🟢 **Slice 2.4 done — Re-ID + edge cases; validated against ground truth.** Phase 1 + Slices 2.0–2.4
+complete. Appearance Re-ID (colour histogram) de-duplicates visitors across cameras + re-entries; a tuned
+ByteTrack cuts fragmentation; staff are flagged by presence. **Ground-truth check (user: ~7 people on
+CAM1/2/3):** per-camera over-count was **53 tracks → tuned tracker 44 → Re-ID 9 unique** (live pipeline,
+`reid_max_distance=0.55`; 2 cross-camera merges, 3 staff). Honest, close to 7. Slice 2.5 (billing queue +
+POS correlation → the "converted" half of conversion) next.
+
+### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
+- **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram
+  `appearance_signature` + `signature_distance` + pure `ReIDGallery` (nearest-match within `reid_max_distance`,
+  else mint; re-match after a gap ⇒ `REENTRY`). Lightweight, offline-safe — no extra model.
+- **VisitorRegistry → gallery-backed:** resolves each `(camera, track)` to a GLOBAL `visitor_id` via the
+  gallery using the track's accumulated signature; this is the cross-camera de-dup.
+- **Tuned ByteTrack** (`detector/app/trackers/bytetrack_shelfsense.yaml`): `track_buffer=150` (~15s, bridges
+  shelf occlusion) + `new_track_thresh=0.5` — the real fix for fragmentation (root cause of over-count).
+  `PersonTracker` loads the local yaml; `enabled_cameras` config restricts which cameras run.
+- **is_staff:** presence heuristic — flagged once continuous presence ≥ `staff_min_presence_ms` (90s); API
+  treats a visitor as staff if **any** event is flagged. **Groups:** counted as individuals by design
+  (per-track). **Confidence:** real value carried on every event, never dropped.
+- **Calibration:** `scripts/calibrate_reid.py` runs the tracker once, sweeps thresholds offline vs the
+  ground-truth 7 → picked 0.55. Honest caveat: clip-tuned + colour histograms are weak features (DESIGN A5).
+- **Verified:** 40 unit tests pass (new `test_reid`, rewritten `test_visits`); ruff clean; clean CAM1/2/3
+  artifact = 146 events, **9 unique visitors**.
+
+### Slice 2.3 (done) — visitor registry + zones
+- **VisitorRegistry** (`detector/app/visits.py`): one `visitor_id` per `(camera, track)` on first sighting
+  + a shared per-visitor `session_seq`. Single source of identity (crossing & zone logic look it up).
+- **ZoneTracker** (`detector/app/zone_tracker.py`): pure state machine — `ZONE_ENTER` after `min_zone_dwell`
+  (2s, noise filter), `ZONE_DWELL` every 30s (running dwell), `ZONE_EXIT` after `zone_exit_grace` absence
+  (total dwell); `flush()` closes tracks at clip end. Camera-level zone (PD-4).
+- **CrossingDetector refactored:** dropped its private id minting; the main loop attaches identity from the
+  registry — fixes the 2.2 risk of two ids for one person.
+- **main.py** now loops ALL customer cameras (CAM1/2/3/5), per-camera `reset()`; reports `zone_visitors`
+  (meaningful, =64) vs `tracks_seen` (raw track ids incl. blips, =155 — diagnostic only).
+- **Verified:** 36 unit tests pass (incl. new `test_visits`, `test_zone_tracker`); ruff clean; full pipeline
+  wrote 163 schema-valid events to `data/events/behavior.jsonl` (70 ENTER / 70 EXIT / 23 DWELL).
 
 ### Slice 2.2 (done) — tracking + ENTRY/EXIT in the prescribed schema
 - **Prescribed schema:** `BehaviorEvent` (flat, 8 `BehaviorEventType`s, `EventMetadata`) in
@@ -21,11 +52,10 @@ visitors** as distinct in-store people (ADR-0007). Slice 2.3 (visitor registry +
 - **Tracking:** `detector/app/track.py` `PersonTracker` wraps Ultralytics **ByteTrack** (`persist=True`,
   `reset()` between cameras); pure `boxes_to_tracks` split out for tests. Entrance tracked at 10 fps.
 - **Footfall core:** `detector/app/crossing.py` `CrossingDetector` — pure per-track line-crossing state
-  machine (seed-on-first-sight, on-line ignored, `confirm_frames` flicker debounce), mints `visitor_id`
-  at ENTRY + `session_seq`. Fully unit-tested.
-- **Emission:** `common/sinks.py` `JsonlEventSink` (append NDJSON). `detector/app/main.py` rewritten:
-  CAM3 → track → crossing → `BehaviorEvent` → JSONL. **Redpanda producer dropped** from the detector.
-  `run_once()` extracted so `scripts/emit_entrance_events.py` runs a single pass locally.
+  machine (seed-on-first-sight, on-line ignored, `confirm_frames` flicker debounce). Fully unit-tested.
+  (Identity moved to the VisitorRegistry in 2.3.)
+- **Emission:** `common/sinks.py` `JsonlEventSink` (append NDJSON). **Redpanda producer dropped** from the
+  detector. `run_once()` extracted so `scripts/emit_entrance_events.py` runs a single pass locally.
 - **⚠ Entrance line — integrity catch (ADR-0006):** an interim move to the frame's right corridor
   reported "3 ENTRY / 3 EXIT", but **user video review showed that corridor is the MALL walkway** —
   pass-by pedestrians, not visitors. **Reverted to the centre-left door** `(320,490)→(1140,415)`. With
@@ -96,18 +126,17 @@ visitors** as distinct in-store people (ADR-0007). Slice 2.3 (visitor registry +
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.3 (visitor registry + zones + ZONE_ENTER / ZONE_EXIT / ZONE_DWELL)
-1. Generalize the tracker loop to **all customer cameras** (CAM1/CAM2/CAM5), per-camera tracker state
-   (`reset()` between clips). Footfall ENTRY/EXIT stays CAM3-only.
-2. **Visitor registry (ADR-0007):** assign a `visitor_id` to every tracked customer on **first
-   detection** in a customer area (not only at a door crossing). This is the unique-visitor basis for
-   conversion. Per-camera for now; Re-ID dedup across overlapping cams in 2.4.
-3. Map each track's foot-point to its camera's **primary zone** (camera-level, [[DECISIONS]] PD-4);
-   emit `ZONE_ENTER`/`ZONE_EXIT` on transitions and a `ZONE_DWELL` every 30s of continuous presence
-   ([[EVENT_SCHEMA]], [[BUSINESS_RULES]]). Debounce with `min_zone_dwell`. Write the same JSONL sink.
-4. Validate: distinct visitor_ids per camera + zone events for CAM1/CAM2/CAM5; eyeball vs the clips.
+## ▶ Next action — Slice 2.5 (billing queue + POS correlation)
+1. On the **checkout camera (CAM5)**, track the billing zone: emit `BILLING_QUEUE_JOIN` with
+   `metadata.queue_depth` and `BILLING_QUEUE_ABANDON` when a visitor leaves without a purchase
+   ([[EVENT_SCHEMA]], [[BUSINESS_RULES]]).
+2. **POS correlation:** load the Brigade CSV; a visitor in the billing zone within the **5-min window
+   before a transaction** counts as **converted** (time-window + store, no customer id). [[BUSINESS_RULES]].
+3. This completes the **"converted" half** of the North Star (`converted ÷ unique visitors`) — pair it
+   with the unique-visitor count from 2.3/2.4.
+4. Mind the clip-vs-full-day window mismatch (PD-3 / DESIGN A3); demonstrate on a comparable window.
 
-See [[TASKS]] Phase 2 for slices 2.3–2.7. Re-ID/staff/groups land in 2.4; API ingest in 2.6.
+See [[TASKS]] Phase 2 for slices 2.5–2.7. API ingest + funnel/heatmap/anomalies in 2.6.
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.

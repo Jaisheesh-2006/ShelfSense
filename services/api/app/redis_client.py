@@ -1,4 +1,5 @@
 """Redis connectivity (hot state / cache). Used for readiness checks in Phase 1."""
+
 from __future__ import annotations
 
 import redis

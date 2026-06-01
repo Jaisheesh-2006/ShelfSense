@@ -3,6 +3,7 @@
 Exposes HTTP metrics (via middleware) plus business gauges that are refreshed from the database
 at scrape time — so `/metrics` values genuinely reflect input and vary with it (integrity).
 """
+
 from __future__ import annotations
 
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest

@@ -42,6 +42,9 @@ docs/raw/
 # Extracted CCTV frames — contain real customers' faces. Keep local only.
 docs/wiki/frames/
 
+# Interview prep — personal defend-your-decisions notes, keep local only.
+docs/wiki/INTERVIEW_QA.md
+
 # OS / editor
 .DS_Store
 Thumbs.db
