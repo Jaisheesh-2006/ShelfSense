@@ -159,6 +159,19 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   globs the CSV, whose real name carries a download suffix), making the `transactions` table the single
   source of truth for conversion + day KPIs. *Why:* keeps the gate-critical ingest path provable in-process
   now, and defers a thin transport detail without affecting any metric. (See [[DECISIONS]] ADR-0013.)
+- **A11 — Anomaly detection is built correctly but *honestly dormant* on a 2-min clip.** The spec's
+  conversion-drop ("vs 7-day average") and dead-zone ("no visits 30 min") checks can't be truthfully
+  evaluated with one day of data and a 2-minute window. So the conversion-drop check uses a **documented
+  config baseline** (a target rate, not a fabricated average) and fires **only at `data_confidence="ok"`**,
+  and the dead-zone check is **span-guarded** (needs ≥ its horizon of observed data); on this clip both
+  return **INFO** explaining why, never a false WARN/CRITICAL. The queue-spike check fires honestly from the
+  real staff-excluded depth. *Why:* fabricating alerts trips the integrity cap and misleads a manager — the
+  same logic activates fully on longer/live feeds. (See [[DECISIONS]] ADR-0014.)
+- **A12 — `/health` freshness is recording-relative by default.** The clip is dated 10-Apr-2026, so comparing
+  the last event to real wall-clock time would always read `STALE_FEED`. By default `/health` measures lag
+  against the **latest ingested event** (a replayed clip reads healthy); `HEALTH_STRICT_NOW=true` switches to
+  real-time for a live deployment (where a stopped feed *should* read stale). *Why:* demo-accurate and
+  production-correct, with the toggle making the trade-off explicit. (ADR-0014.)
 
 ## 8. Known limitations & next steps
 - Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a

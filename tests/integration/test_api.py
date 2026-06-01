@@ -94,3 +94,46 @@ def test_batch_over_500_rejected_with_envelope(client) -> None:
 
 def test_retired_api_v1_is_gone(client) -> None:
     assert client.get("/api/v1/conversion").status_code == 404
+
+
+def test_heatmap_endpoint(client) -> None:
+    client.post("/events/ingest", json={"events": _batch()})
+    heat = client.get("/stores/ST1008/heatmap").json()
+    by_zone = {z["zone"]: z for z in heat["zones"]}
+    # c1 in makeup, c2 in skincare → both 1 visitor → both at the (tied) busiest score.
+    assert by_zone["makeup_aisle"]["score"] == 100.0
+    assert by_zone["makeup_aisle"]["avg_dwell_ms"] == 8000.0
+    assert heat["data_confidence"] == "low"
+
+
+def test_anomalies_are_honest_not_fabricated(client) -> None:
+    client.post("/events/ingest", json={"events": _batch()})
+    body = client.get("/stores/ST1008/anomalies").json()
+    severities = {a["type"]: a["severity"] for a in body["anomalies"]}
+    # No real alert on the tiny clip: depth 1 (< warn), low-sample conversion, short window.
+    assert all(a["severity"] == "INFO" for a in body["anomalies"])
+    assert severities.get("CONVERSION_DROP") == "INFO"
+    assert severities.get("DEAD_ZONE") == "INFO"
+    assert "QUEUE_SPIKE" not in severities
+
+
+def test_health_recording_relative_is_ok(client) -> None:
+    client.post("/events/ingest", json={"events": _batch()})
+    health = client.get("/health").json()
+    assert health["status"] == "ok"
+    assert health["strict_now"] is False
+    assert health["stores"][0]["store_id"] == "ST1008"
+    assert health["stores"][0]["stale_feed"] is False  # fresh vs the latest ingested event
+
+
+def test_health_strict_now_flags_stale(client, monkeypatch) -> None:
+    client.post("/events/ingest", json={"events": _batch()})
+    # The clip is from 2026-04-10; against real wall-clock time the feed is legitimately stale.
+    from shelfsense_common.config import get_settings
+
+    monkeypatch.setenv("HEALTH_STRICT_NOW", "true")
+    get_settings.cache_clear()
+    health = client.get("/health").json()
+    assert health["strict_now"] is True
+    assert health["stores"][0]["stale_feed"] is True
+    assert health["status"] == "degraded"

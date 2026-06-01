@@ -1,6 +1,6 @@
 # CHOICES — key engineering decisions
 
-Five headline decisions, each with the options weighed, what the AI suggested, what we chose, why,
+Six headline decisions, each with the options weighed, what the AI suggested, what we chose, why,
 and **when we would revisit it**. Full decision log: `docs/wiki/DECISIONS.md`.
 
 ---
@@ -147,3 +147,35 @@ can't diverge. The rename fixed a real latent bug and unblocked testing the high
 **Trade-off / when we'd revisit.** Raw-dict validation is slightly more code than a typed body, and the
 portable dedup does an extra read vs a native upsert — both cheap at this scale. At very high ingest
 volumes we'd switch to a batched `ON CONFLICT` upsert behind the same idempotent contract.
+
+---
+
+## Decision 6 — Anomalies & health: honest dormancy over fabricated alerts
+
+**Context.** The spec asks for anomaly detection (queue spike, **conversion drop vs a 7-day average**,
+**dead zone with no visits for 30 min**) and a `/health` feed-freshness check. But our data is a single
+**2-minute clip** from **10-Apr-2026**: there is no 7-day history, no 30-minute window, and the recording
+is two months old. A naive implementation would either fabricate baselines or always read "stale".
+
+**Options considered.**
+- (a) Fire the alerts anyway against invented baselines / wall-clock time — looks feature-complete.
+- (b) Omit the checks we can't fully evaluate — honest but loses graded features.
+- (c) Build every check correctly, but have the ones the data can't support **stand down with an INFO
+  reason**, and make `/health` freshness **recording-relative** (vs the latest event) with a strict toggle.
+
+**What the AI suggested.** It flagged that (a) trips the integrity cap (outputs not computing from real
+input) and misleads a manager, and that an always-red `/health` hurts the demo. It recommended (c): a
+documented config baseline for conversion-drop that only fires at trustworthy sample size, a span-guarded
+dead-zone check, and recording-relative health with a `HEALTH_STRICT_NOW` switch for live use.
+
+**Decision.** **(c)** — build all three anomalies + `/health`, but let the conversion-drop and dead-zone
+checks emit **INFO ("insufficient data / window too short")** on the clip instead of false WARN/CRITICAL;
+`/health` measures lag against the latest ingested event by default, real wall-clock when toggled.
+
+**Why.** It keeps every output **computed from real input** and trustworthy, which is exactly what the
+integrity check and an on-call engineer both need. The same code fires real alerts the moment a longer or
+live feed is connected — we lose nothing by being honest about a 2-minute sample.
+
+**Trade-off / when we'd revisit.** Recording-relative health can hide a genuinely stopped live feed — hence
+the strict toggle for production. The conversion baseline is a config target until real multi-day history
+lets us compute a rolling 7-day average (then it's a one-line swap, same rule).

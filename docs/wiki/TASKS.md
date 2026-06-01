@@ -67,8 +67,14 @@
   reusing 2.5's `correlate_conversions`/`pos_day_metrics`); session-based, staff-excluded, monotonic funnel.
   POS loaded into Postgres at startup (glob fallback). **Validated (real data):** 135 events, re-POST = 0/135
   dup, **unique 2 / conversion 0% / funnel 2→2→0→0**. 82 tests pass (+13); ruff clean.
-- ⬜ **Slice 2.7 — heatmap + anomalies + health.** `/heatmap` (normalised, data_confidence),
-  `/anomalies` (queue spike / conversion drop vs 7-day / dead zone; severity + suggested_action), `/health` (STALE_FEED).
+- ✅ **Slice 2.7 — heatmap + anomalies + health (ADR-0014).** `/stores/{id}/heatmap` (per-zone visits + avg
+  dwell, **normalised 0–100**, data_confidence), `/stores/{id}/anomalies` (QUEUE_SPIKE / CONVERSION_DROP /
+  DEAD_ZONE; severity + suggested_action), `/health` (per-store freshness, **recording-relative** by default
+  + `HEALTH_STRICT_NOW` toggle, STALE_FEED). Pure logic in `common/analytics.py` (`compute_heatmap`,
+  `detect_anomalies`, `feed_status`). **Honest:** conversion-drop uses a documented baseline + fires only at
+  ok confidence; dead-zone is span-guarded → both INFO (no false alerts) on the 2-min clip. **Validated:**
+  heatmap makeup=100; `/health` ok→stale under strict. 95 tests pass (+18); ruff clean.
+  **→ Phase 2 complete: every prescribed endpoint exists.**
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);

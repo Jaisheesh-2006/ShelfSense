@@ -21,8 +21,13 @@
 4. **Partial occlusion** → detection confidence must **degrade gracefully, not fail silently**;
    keep low-confidence events but **flag** them. ✅ real `confidence` carried on every event; the
    tracker bridges short gaps. (See confidence calibration below.)
-5. **Billing queue buildup** → track `queue_depth` and emit `BILLING_QUEUE_JOIN`/`ABANDON`. ⬜ Slice 2.5.
-6. **Empty store periods** (5–10 min no customers) → API must return **0 / valid JSON, never null/crash**. ⬜ API (2.6).
+5. **Billing queue buildup** → track `queue_depth` and emit `BILLING_QUEUE_JOIN`/`ABANDON`.
+   ✅ *Slice 2.5:* `BillingTracker` emits `BILLING_QUEUE_JOIN` with `queue_depth` on CAM5; abandon derived
+   in conversion. ✅ *Slice 2.7:* `/anomalies` raises a `QUEUE_SPIKE` (WARN/CRITICAL) off the staff-excluded
+   depth (ADR-0014).
+6. **Empty store periods** (5–10 min no customers) → API must return **0 / valid JSON, never null/crash**.
+   ✅ *Slice 2.6/2.7:* every endpoint handles zero-traffic (honest zeros, `data_confidence="low"`); unit +
+   integration tests cover the empty/low-sample paths. The dead-zone anomaly is the explicit "quiet zone" signal.
 7. **Camera angle overlap** (floor overlaps entry) → **cross-camera dedup**: same person not double-counted.
    ✅ *Slice 2.4:* appearance Re-ID merges the same shopper across cameras into one `visitor_id`
    (approximate — ADR-0008/A5). ✅ *Slice 2.4b:* the **entrance camera no longer counts visitors** (footfall

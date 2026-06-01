@@ -95,15 +95,29 @@
   with `data_confidence="low"` (the window mismatch). The mechanism is demonstrated on a comparable window
   (`scripts/demo_conversion.py`, `POS_DEMO_ALIGNMENT`).
 
-## Heatmap
-- Per-zone **visit frequency + average dwell**, **normalised 0–100** for grid rendering.
-- Include a `data_confidence` flag when **< 20 sessions** in the window (low-sample warning).
+## Heatmap (Slice 2.7, ADR-0014, `analytics.compute_heatmap`)
+- Per-zone **distinct-customer visit frequency + average dwell**, **normalised 0–100** (busiest zone =
+  100) for grid rendering. Staff excluded.
+- Include a `data_confidence="low"` flag when **< `conversion_low_sample_threshold` (20)** customers.
 
-## Anomalies (severity + suggested action)
-- **Queue spike:** billing `queue_depth` exceeds a threshold/trend.
-- **Conversion drop:** conversion rate materially below the **7-day average**.
-- **Dead zone:** a zone with **no visits for 30 minutes** (during open hours).
-- Each: `severity` INFO/WARN/CRITICAL + a human `suggested_action`. Compute from input (no hardcoding).
+## Anomalies (severity + suggested action) — Slice 2.7, ADR-0014, `analytics.detect_anomalies`
+- **Queue spike:** billing `queue_depth` (staff-excluded) ≥ `anomaly_queue_depth_warn` ⇒ WARN,
+  ≥ `anomaly_queue_depth_critical` ⇒ CRITICAL. Suggested action: open another till.
+- **Conversion drop:** conversion below `anomaly_conversion_baseline × (1 − anomaly_conversion_drop_pct)`.
+  ⚠ We have **one day** of data, not a 7-day average, so the baseline is a **documented config target**.
+  The check fires **only at `data_confidence="ok"`**; under low sample it emits **INFO** — it never cries
+  wolf on the 2-min clip.
+- **Dead zone:** a monitored customer zone (from `STORE` config) with **no visit for
+  `anomaly_dead_zone_minutes`** during open hours (`store_open_hour`–`store_close_hour`). **Span-guarded:**
+  only evaluated when the observed window is at least that long; otherwise **INFO** ("window too short").
+- Each: `severity` INFO/WARN/CRITICAL + a human `suggested_action`. **All compute from input** (no
+  hardcoding); honest dormancy over fabricated alerts is deliberate (integrity cap + reviewer trust).
+
+## Health / feed freshness (Slice 2.7, ADR-0014)
+- **`/health`** reports per-store `last_event_at`, `lag_seconds`, `stale_feed`. Freshness is
+  **recording-relative** by default (lag vs the latest ingested event, so a replayed clip reads healthy);
+  `health_strict_now=true` compares to real wall-clock for live ops. `STALE_FEED` when lag >
+  `health_stale_feed_minutes`. `status=degraded` if the DB is unreachable or any feed is stale.
 
 ## Store KPIs
 - Unique visitors, conversion rate, avg session duration, avg dwell per zone, top zones,
@@ -123,6 +137,13 @@
 | `pos_correlation_window_ms` | billing-zone-before-a-sale window for "converted" (ADR-0012) | 300000 (5 min) |
 | `conversion_low_sample_threshold` | < N unique customers ⇒ `data_confidence="low"` | 20 |
 | `store_timezone` | tz for POS `order_date`+`order_time` → UTC | Asia/Kolkata |
+| `anomaly_queue_depth_warn` / `_critical` | checkout-customer depth ⇒ WARN / CRITICAL queue spike (2.7) | 3 / 5 |
+| `anomaly_conversion_baseline` | documented target conversion rate (no 7-day history) — drop baseline | 0.15 |
+| `anomaly_conversion_drop_pct` | fire conversion-drop when rate ≤ baseline·(1−this), at ok confidence only | 0.30 |
+| `anomaly_dead_zone_minutes` | zone silent this long during open hours ⇒ dead zone (span-guarded) | 30 min |
+| `store_open_hour` / `store_close_hour` | store-local trading window for dead-zone | 12 / 22 |
+| `health_stale_feed_minutes` | feed lag beyond which a store is `STALE_FEED` | 10 min |
+| `health_strict_now` | false ⇒ freshness vs latest event (recording-relative); true ⇒ vs real now | false |
 
 All thresholds via environment variables (no hardcoding). See [[EVENT_SCHEMA]] for how these
 become events and [[API_SPEC]] for how they surface.

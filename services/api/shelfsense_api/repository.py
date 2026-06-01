@@ -113,12 +113,24 @@ def fetch_events(session: Session, store_id: str) -> list[BehaviorEvent]:
 
 
 def latest_event_ms(session: Session, store_id: str) -> int | None:
-    """Epoch-ms of the most recent event for a store (None if none). Used by /health in 2.7."""
+    """Epoch-ms of the most recent event for a store (None if none). Used by /health."""
     from sqlalchemy import func
 
     return session.scalar(
         select(func.max(BehaviorEventRow.ts_ms)).where(BehaviorEventRow.store_id == store_id)
     )
+
+
+def latest_event_ms_by_store(session: Session) -> dict[str, int]:
+    """Map of store_id -> epoch-ms of its most recent event (one row per store with events)."""
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(BehaviorEventRow.store_id, func.max(BehaviorEventRow.ts_ms)).group_by(
+            BehaviorEventRow.store_id
+        )
+    ).all()
+    return dict(rows)
 
 
 def upsert_transactions(session: Session, txns: Iterable[Transaction]) -> int:

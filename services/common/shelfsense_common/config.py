@@ -96,6 +96,27 @@ class Settings(BaseSettings):
     # visible. NEVER changes the honest clip number; honoured only by scripts/demo_conversion.py.
     pos_demo_alignment: bool = False
 
+    # --- Anomalies (Slice 2.7) ---
+    # Queue-spike severities (customers in the checkout zone, staff excluded).
+    anomaly_queue_depth_warn: int = 3
+    anomaly_queue_depth_critical: int = 5
+    # Conversion-drop baseline. We have ONE day of data, not the spec's 7-day average, so this is a
+    # documented *target* rate; the anomaly fires only at data_confidence="ok" (never on the
+    # low-sample 2-min clip). Fire when conversion <= baseline * (1 - drop_pct).
+    anomaly_conversion_baseline: float = 0.15
+    anomaly_conversion_drop_pct: float = 0.30
+    # Dead-zone: a customer zone with no visit for this many minutes during open hours. Evaluated
+    # only when the observed span is at least this long (a 2-min clip can't assert 30-min silence).
+    anomaly_dead_zone_minutes: int = 30
+    store_open_hour: int = 12  # store-local trading window (POS spans ~12:15-21:40); for dead-zone
+    store_close_hour: int = 22
+
+    # --- Health / feed freshness (Slice 2.7) ---
+    health_stale_feed_minutes: int = 10  # lag beyond which a store's feed is STALE_FEED
+    # Recording-relative by default: freshness is measured against the latest ingested event, so a
+    # replayed clip reads healthy. Set true to compare against real wall-clock time (live ops).
+    health_strict_now: bool = False
+
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000

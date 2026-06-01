@@ -8,10 +8,27 @@
 
 ## Current phase
 
-🟢 **Slice 2.6 done — the Intelligence API: ingest + core metrics.** Phase 1 + Slices 2.0–2.6 complete.
-The pipeline's events now flow into Postgres via `POST /events/ingest` (idempotent) and the headline
-numbers are served live at `GET /stores/{id}/{metrics,funnel}`, reusing the 2.5 engine. Acceptance-gate
-endpoints (`/events/ingest`, `/metrics`) are in place. Slice 2.7 (heatmap + anomalies + `/health`) next.
+🟢 **Slice 2.7 done — heatmap + anomalies + health. Phase 2 complete: every prescribed endpoint exists.**
+Phase 1 + Slices 2.0–2.7 done. The API now serves `/stores/{id}/{metrics,funnel,heatmap,anomalies}` +
+`/health`, all computed live from ingested events, all honest about the 2-min clip's limits. Remaining
+work is **Phase 3 polish** (coverage push, logging fields, the bonus React dashboard, final gate dry-run).
+
+### Slice 2.7 (done) — heatmap + anomalies + health (ADR-0014)
+- **Pure logic in `common/analytics.py`:** `compute_heatmap` (per-zone distinct-customer visits + avg
+  dwell, **normalised 0–100** to the busiest zone; `data_confidence` flag), `detect_anomalies`
+  (QUEUE_SPIKE / CONVERSION_DROP / DEAD_ZONE with severity + `suggested_action`), `feed_status` (lag +
+  stale). Reuses `customer_visitor_ids` / `_avg_dwell_by_zone` / `compute_store_metrics`. Routers thin.
+- **Honest anomalies (the headline judgment):** conversion-drop uses a **documented config baseline**
+  (no 7-day history) and only fires at `data_confidence="ok"` — INFO under low sample; dead-zone is
+  **span-guarded** (needs ≥ `dead_zone_minutes` of data) — INFO on the 2-min clip. So **no fabricated
+  WARN/CRITICAL** on this dataset; queue spike still fires from real staff-excluded depth.
+- **`/health` recording-relative (user choice):** freshness vs the latest ingested event by default (a
+  replayed clip reads healthy); `HEALTH_STRICT_NOW=true` → real wall-clock. `status=degraded` if DB down
+  or any feed stale. New repo helper `latest_event_ms_by_store`.
+- **Validated (real data, TestClient):** heatmap `makeup_aisle`=100 (data_confidence low); anomalies =
+  2× INFO (conversion low-sample, dead-zone window-too-short) — no false alerts; `/health` default →
+  `ok`/not-stale, strict → `degraded`/stale (lag ≈ 52 days). **95 tests pass** (+13: `test_anomalies`,
+  +5 API); ruff clean. New config knobs (anomaly thresholds, open hours, health) in `.env.example`.
 
 ### Slice 2.6 (done) — API ingest + core metrics (ADR-0013)
 - **Renamed API package `app` → `shelfsense_api`** (both detector + api had a top-level `app` that
@@ -205,17 +222,15 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.7 (heatmap + anomalies + health)
-1. **`GET /stores/{id}/heatmap`** — per-zone visit frequency + avg dwell, **normalised 0–100**;
-   `data_confidence` flag when < 20 sessions. Reuse `analytics` zone aggregates ([[API_SPEC]]).
-2. **`GET /stores/{id}/anomalies`** — queue spike / conversion-drop-vs-7-day / dead-zone (no visits 30 min);
-   each with `severity` (INFO/WARN/CRITICAL) + `suggested_action`. **Note:** no 7-day baseline exists (one
-   day of data) → configurable/synthetic baseline + an honest Assumption, same posture as the 2.5 window.
-3. **`GET /health`** — service status + last event timestamp per store; `STALE_FEED` if > 10 min lag
-   (reuse `repository.latest_event_ms`, already added in 2.6).
-
-All three are **read endpoints layered on the 2.6 foundation** (DB + repository + analytics) — no new
-ingest/schema work. See [[TASKS]] Phase 2.
+## ▶ Next action — Phase 3 (production hardening, AI docs, dashboard)
+Every prescribed endpoint now exists. Phase 3 is **polish + packaging** ([[TASKS]] Phase 3):
+1. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, event_count,
+   status_code` on each request; confirm graceful degradation (DB down → 503, no stack trace).
+2. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
+3. **Live dashboard (Part E, bonus)** — a small **React** screen with ≥1 metric updating as events flow.
+4. **Final acceptance-gate dry-run** — `docker compose up` on a clean machine; zero manual steps;
+   `/metrics`/`/events/ingest` respond; `DESIGN.md`+`CHOICES.md` present; nothing crashes.
+5. Keep `DESIGN.md`/`CHOICES.md` in sync (ongoing).
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.

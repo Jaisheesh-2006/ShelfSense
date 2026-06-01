@@ -59,6 +59,15 @@
   `conversion.correlate_conversions`/`pos_day_metrics`. Computed live; staff-excluded; funnel monotonic.
   POS loaded into Postgres on startup (`pos_ingest.py`, globs the CSV).
 - ✅ **`/metrics`** (Prometheus) gauges recomputed from `behavior_events`; `/healthz`, `/readyz` retained.
-- ⬜ **`/stores/{id}/heatmap`**, **`/stores/{id}/anomalies`**, **`/health`** (STALE_FEED) → **Slice 2.7**
-  (`repository.latest_event_ms` already exists for `/health`).
 - The API package was renamed `app` → `shelfsense_api`; run `uvicorn shelfsense_api.main:app`.
+
+## Status (Slice 2.7 — ADR-0014, implemented)
+- ✅ **`GET /stores/{id}/heatmap`** — per-zone distinct-customer visits + avg dwell, **normalised 0–100**
+  (busiest zone = 100), `data_confidence` flag. Pure `analytics.compute_heatmap`.
+- ✅ **`GET /stores/{id}/anomalies`** — `QUEUE_SPIKE` / `CONVERSION_DROP` / `DEAD_ZONE`, each with
+  `severity` + `suggested_action` (`analytics.detect_anomalies`). **Honest:** conversion-drop uses a
+  documented config baseline (no 7-day history) and fires only at `data_confidence="ok"` (INFO otherwise);
+  dead-zone is span-guarded (INFO when the window < `dead_zone_minutes`). No fabricated alerts on the clip.
+- ✅ **`GET /health`** — per-store `last_event_at` + `lag_seconds` + `stale_feed`; **recording-relative**
+  freshness by default (`HEALTH_STRICT_NOW=true` → real wall-clock). `status=degraded` if DB down/any stale.
+- All compute from ingested input; thresholds are env-driven ([[BUSINESS_RULES]]). **Phase 2 complete.**
