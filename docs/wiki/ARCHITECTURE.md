@@ -45,6 +45,17 @@ reworked independently. The whole stack starts with one `docker compose up`.
 | **Dashboard** | Show ≥1 metric live as events flow (Part E). | API → screen |
 | **Prometheus + Grafana** | Process metrics + dashboards (observability). | `/metrics` |
 
+## API internals (Slice 2.6, ADR-0013)
+Package `shelfsense_api` (renamed from `app` to un-collide with the detector's `app`; run
+`uvicorn shelfsense_api.main:app`). Strict layering, no business logic in handlers:
+- **routers/** (`events.py`, `stores.py`, `health.py`) — HTTP shape + validation only.
+- **`shelfsense_common/analytics.py`** — pure `compute_funnel`/`compute_store_metrics` (reuse 2.5's
+  `conversion.py`); the same functions feed the Prometheus business gauges, so numbers never diverge.
+- **`repository.py`** — the only DB-touching layer; maps `BehaviorEvent`/`Transaction` ↔ ORM rows,
+  does idempotent dedup insert. Tables: `behavior_events` (new, `event_id` PK), `transactions`
+  (POS, loaded at startup by `pos_ingest.py`). The engine is built lazily so the app imports without a
+  Postgres driver (hermetic SQLite TestClient tests). Retired the placeholder `/api/v1/*`.
+
 ## Camera → role mapping (our 5 cams → spec's 3 roles)
 Entry = **CAM3** (calibrated footfall line — **footfall only, does not count visitors**: its view is
 dominated by mall-corridor pass-by; ADR-0011) · Main floor = **CAM1 + CAM2** · Billing = **CAM5** (with a

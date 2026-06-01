@@ -1,6 +1,6 @@
 # Repo-level config for tooling that spans services (tests, lint).
 [tool.pytest.ini_options]
-pythonpath = ["services/common", "services/detector"]
+pythonpath = ["services/common", "services/detector", "services/api"]
 testpaths = ["tests"]
 addopts = "-q"
 

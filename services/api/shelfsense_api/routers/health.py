@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response, status
 
-from app.db import ping_db
-from app.redis_client import ping_redis
+from shelfsense_api.db import ping_db
+from shelfsense_api.redis_client import ping_redis
 
 router = APIRouter(tags=["health"])
 

@@ -309,3 +309,46 @@ What changes vs. our earlier design:
   path needs a compose mount (`docs/raw → /data/pos`) when 2.6 wires the API.
 - **Rationale:** delivers a correct, reusable, tested conversion engine; keeps the detector pure-CV; and
   turns the dataset's window mismatch into an explicit, honest demonstration rather than a hidden fudge.
+
+---
+
+## ADR-0013 — Intelligence API: idempotent ingest, reuse pure analytics, POS-at-startup (Slice 2.6)
+- **Date:** 2026-06-01 · **Status:** Accepted
+- **Context:** The largest rubric bucket (API & Business Logic, 35) and the acceptance gate both live
+  here: `POST /events/ingest` + `GET /stores/{id}/{metrics,funnel}`, computed from ingested events,
+  retiring the placeholder `/api/v1/*` (ADR-0005). Built sequentially before 2.7 (user's choice) to
+  land the gate-critical endpoints solidly first.
+- **Decision (five parts):**
+  1. **Rename the API package `app` → `shelfsense_api`.** Both `services/detector/app` and
+     `services/api/app` were top-level packages named `app`; on one `sys.path` they collide, so the
+     API could not be imported in the shared pytest session — the 35-mark bucket was untestable.
+     Renaming (internal imports + Dockerfile `uvicorn shelfsense_api.main:app`; the FastAPI variable
+     stays `app`) fixes a real latent bug and lets `services/api` join the pytest `pythonpath`.
+  2. **Pure analytics in `services/common/analytics.py`** (`compute_funnel`, `compute_store_metrics`),
+     reusing `correlate_conversions`/`pos_day_metrics`. Same rationale as ADR-0012: DB-free, unit-tested,
+     reused by the API + Prometheus gauges + 2.7. Routers are thin adapters; `repository.py` is the only
+     place mapping Pydantic contracts ↔ ORM rows. No business logic in handlers.
+  3. **Idempotent ingest by `event_id`** (`BehaviorEventRow` PK). `insert_events_dedup` de-dupes within
+     the batch and against the DB, with an `IntegrityError` per-row fallback for races — re-POSTing is a
+     safe no-op (validated: 135 real events → 2nd POST = 0 accepted / 135 duplicate). **Partial success:**
+     the body is accepted as raw dicts (`≤500`) and each event validated individually, so one bad event
+     is reported in `errors[]` rather than 422-ing the whole batch (the over-500 case *does* 422, wrapped
+     in the `{"error":{...}}` envelope via a `RequestValidationError` handler).
+  4. **Load POS into Postgres at API startup** (idempotent upsert), then query at request time — makes
+     the `transactions` table + its Prometheus gauge real and gives one source of truth. Defensive: the
+     real file is `Brigade_Bangalore_10_April_26 (1)bc6219c.csv`, so the loader **globs `*.csv`** rather
+     than trusting the brittle default name, and a missing file logs a warning (honest zeros, no crash).
+  5. **Funnel `entry` stage = unique non-staff visitors** (ADR-0007), and stages are forced into a
+     monotonic subset chain (purchase ⊆ billing ⊆ zone_visit ⊆ entry) so drop-off is always in [0,100].
+     Queue depth is filtered to customers too, so it stays consistent with the staff-excluded funnel.
+- **Alternatives:** (a) keep the `app` name and skip API tests — leaves the biggest bucket unverified;
+  (b) read the POS CSV per request — re-reads a static file repeatedly and leaves the `transactions`
+  table/gauge empty; (c) type the request body as `list[BehaviorEvent]` — clean, but Pydantic would
+  reject the whole batch on one bad event, violating partial-success; (d) Postgres `ON CONFLICT` upsert
+  — faster but dialect-specific, breaking the SQLite test path, so we use a portable dedup + fallback.
+- **Trade-offs / notes:** computing metrics live per request (not cached) is the SPEC requirement and is
+  cheap at this scale (~150 events); the lazy engine in `db.py` means importing the app needs no Postgres
+  driver, which is what makes the SQLite TestClient tests hermetic. The `behavior_events` table is the new
+  source of truth; `visit_sessions` is retained but unused in 2.6.
+- **Rationale:** lands the gate-critical, highest-weighted endpoints with real idempotency + partial
+  success, reuses the tested 2.5 engine verbatim, and makes the whole API path provable in-process.

@@ -8,9 +8,33 @@
 
 ## Current phase
 
-🟢 **Slice 2.5 done — billing queue + POS correlation; the full conversion engine exists.** Phase 1 +
-Slices 2.0–2.5 complete. Both halves of the North Star now compute from real input. Slice 2.6 (the API:
-`POST /events/ingest` + `/stores/{id}/{metrics,funnel}`, reusing this slice's pure logic) next.
+🟢 **Slice 2.6 done — the Intelligence API: ingest + core metrics.** Phase 1 + Slices 2.0–2.6 complete.
+The pipeline's events now flow into Postgres via `POST /events/ingest` (idempotent) and the headline
+numbers are served live at `GET /stores/{id}/{metrics,funnel}`, reusing the 2.5 engine. Acceptance-gate
+endpoints (`/events/ingest`, `/metrics`) are in place. Slice 2.7 (heatmap + anomalies + `/health`) next.
+
+### Slice 2.6 (done) — API ingest + core metrics (ADR-0013)
+- **Renamed API package `app` → `shelfsense_api`** (both detector + api had a top-level `app` that
+  collided on the test path, blocking API tests). Dockerfile now runs `uvicorn shelfsense_api.main:app`;
+  `services/api` added to pytest `pythonpath`. Old `/api/v1/*` (`business.py`) **retired** (ADR-0005).
+- **Pure analytics** (`common/analytics.py`): `compute_funnel` + `compute_store_metrics` over
+  `BehaviorEvent`s, reusing `correlate_conversions`/`pos_day_metrics`. Session-based, staff-excluded
+  (any-flag), funnel stages forced monotonic (purchase ⊆ billing ⊆ zone ⊆ entry). DB-free + unit-tested.
+- **`POST /events/ingest`** (`routers/events.py`): ≤500 events, **idempotent by `event_id`**
+  (`repository.insert_events_dedup`, within-batch + DB dedup + IntegrityError fallback), **partial
+  success** (each event validated individually; bad ones go to `errors[]`, not a whole-batch 422).
+  Over-500 → 422 wrapped in the `{"error":{...}}` envelope.
+- **`GET /stores/{id}/metrics` + `/funnel`** (`routers/stores.py`): thin adapters that load events +
+  POS from the DB and call the pure analytics — computed live per request, never cached/hardcoded.
+- **POS into Postgres at startup** (`pos_ingest.py`): globs `*.csv` (the real file is
+  `Brigade_Bangalore_10_April_26 (1)bc6219c.csv`) → `load_transactions` → upsert; graceful if absent.
+  New `behavior_events` ORM table + `department` on `transactions`; engine is **lazy** so importing the
+  app needs no Postgres driver (hermetic SQLite TestClient tests via `db.configure_engine`).
+- **Validated end-to-end (real data, TestClient on SQLite):** 135 events ingest; re-POST → **0 accepted /
+  135 duplicate** (idempotency); POS 24 txns / GMV ₹44,920 / peak hour 19; **unique_visitors 2,
+  conversion 0%** (`data_confidence=low`), **funnel Entry 2 → Zone 2 → Billing 0 → Purchase 0**. Prometheus
+  gauges recomputed from `behavior_events`. **82 unit+integration tests pass** (+13: `test_analytics`,
+  `test_api`); ruff clean. `scripts/ingest_events.py` replays the JSONL to a running API.
 
 ### Slice 2.5 (done) — billing queue + POS correlation (ADR-0012)
 - **POS loader** (`common/shelfsense_common/pos_loader.py`) + **`Transaction` contract** (`contracts/pos.py`):
@@ -181,16 +205,17 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Slice 2.6 (Intelligence API: ingest + core metrics)
-1. **`POST /events/ingest`** — accept a batch ≤500 `BehaviorEvent`s; **idempotent by `event_id`**,
-   partial-success on bad events, structured errors; persist to Postgres ([[API_SPEC]]).
-2. **`GET /stores/{id}/metrics`** + **`/funnel`** — compute from stored events, **reusing this slice's
-   `conversion.correlate_conversions` + `pos_loader` verbatim** (the reason that logic lives in `common`).
-   Funnel is session-based, re-entries don't double-count; exclude `is_staff` (any-flag rule).
-3. **Retire the old `/api/v1/*`** endpoints (ADR-0005). Map the loader `Transaction` → the `db.Transaction` ORM.
-4. Add the compose mount `docs/raw → /data/pos` so `pos_csv_path` resolves in-container.
+## ▶ Next action — Slice 2.7 (heatmap + anomalies + health)
+1. **`GET /stores/{id}/heatmap`** — per-zone visit frequency + avg dwell, **normalised 0–100**;
+   `data_confidence` flag when < 20 sessions. Reuse `analytics` zone aggregates ([[API_SPEC]]).
+2. **`GET /stores/{id}/anomalies`** — queue spike / conversion-drop-vs-7-day / dead-zone (no visits 30 min);
+   each with `severity` (INFO/WARN/CRITICAL) + `suggested_action`. **Note:** no 7-day baseline exists (one
+   day of data) → configurable/synthetic baseline + an honest Assumption, same posture as the 2.5 window.
+3. **`GET /health`** — service status + last event timestamp per store; `STALE_FEED` if > 10 min lag
+   (reuse `repository.latest_event_ms`, already added in 2.6).
 
-See [[TASKS]] Phase 2 for slices 2.6–2.7 (heatmap/anomalies/health in 2.7).
+All three are **read endpoints layered on the 2.6 foundation** (DB + repository + analytics) — no new
+ingest/schema work. See [[TASKS]] Phase 2.
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.

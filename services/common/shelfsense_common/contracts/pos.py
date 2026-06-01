@@ -6,7 +6,8 @@ sales CSV into validated `Transaction`s that the conversion logic (conversion.py
 billing-zone presence. One `Transaction` = one distinct `order_id` (basket), not one line item.
 
 Note: this is a *domain/loader* value object, distinct from the SQLAlchemy `Transaction` ORM row in
-services/api/app/db.py (persistence). Slice 2.6's API maps loader -> ORM; they are different layers.
+services/api/shelfsense_api/db.py (persistence). The Slice 2.6 API maps loader <-> ORM in
+repository.py; they are different layers.
 
 Timestamps are timezone-aware UTC — the same clock `BehaviorEvent.timestamp` uses — so the 5-minute
 correlation window compares like-with-like (the CSV's store-local IST times are converted on load).

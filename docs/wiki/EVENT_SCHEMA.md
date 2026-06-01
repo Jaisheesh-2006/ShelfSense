@@ -62,3 +62,8 @@ on the shopping-floor cameras (2.3); `REENTRY` + `is_staff` (dark-uniform, ADR-0
 de-duplicated** `visitor_id` via appearance Re-ID (2.4, ADR-0008); **`BILLING_QUEUE_JOIN` with
 `queue_depth`** on CAM5 (2.5, ADR-0012; `BILLING_QUEUE_ABANDON` derived in conversion). Validators
 enforce a tz-aware UTC timestamp and `zone_id=None` for ENTRY/EXIT.
+
+**Ingested + persisted (Slice 2.6, ADR-0013):** `POST /events/ingest` validates each event against this
+model and stores it in the `behavior_events` table keyed by `event_id` (idempotent dedup). `metadata`
+is flattened on persistence to the columns the metrics need (`queue_depth`); the other flat fields map
+1:1. Metrics/funnel are recomputed from these rows on read (`shelfsense_common/analytics.py`).

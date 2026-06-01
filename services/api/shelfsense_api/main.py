@@ -1,7 +1,9 @@
 """ShelfSense API service (FastAPI).
 
-Read surface for business insights + the gate-critical `/metrics`, `/healthz`, `/readyz`.
-Business logic lives in routers/services, not here. Run: `uvicorn app.main:app`.
+The Intelligence API: ingests behavioural events (`POST /events/ingest`) and serves per-store
+metrics (`/stores/{id}/metrics`, `/funnel`) computed live from stored events, plus the gate-critical
+`/metrics` (Prometheus), `/healthz`, `/readyz`. Business logic lives in `analytics`/`conversion`
+(shared) and `repository` — not in route handlers. Run: `uvicorn shelfsense_api.main:app`.
 """
 
 from __future__ import annotations
@@ -11,13 +13,15 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from shelfsense_common.config import get_settings
 from shelfsense_common.logging import configure_logging, get_logger
 
-from app.db import init_db
-from app.metrics import HTTP_LATENCY, HTTP_REQUESTS, render_metrics
-from app.routers import business, health
+from shelfsense_api.db import init_db
+from shelfsense_api.metrics import HTTP_LATENCY, HTTP_REQUESTS, render_metrics
+from shelfsense_api.pos_ingest import load_pos_into_db
+from shelfsense_api.routers import events, health, stores
 
 settings = get_settings()
 configure_logging(service_name="api", level=settings.log_level)
@@ -32,13 +36,18 @@ async def lifespan(app: FastAPI):
         log.info("db_initialised")
     except Exception as exc:  # don't crash the process; readiness will report not-ready
         log.warning("db_init_failed", error=str(exc))
+    try:
+        loaded = load_pos_into_db()
+        log.info("pos_ingest_done", transactions=loaded)
+    except Exception as exc:  # POS is supplementary; honest zeros if it fails
+        log.warning("pos_ingest_failed", error=str(exc))
     yield
     log.info("api_stopping")
 
 
 app = FastAPI(
     title="ShelfSense API",
-    version="0.1.0",
+    version="0.2.0",
     description="Retail store-intelligence metrics derived from CCTV + POS data.",
     lifespan=lifespan,
 )
@@ -54,6 +63,27 @@ async def observe_requests(request: Request, call_next: Callable[[Request], Awai
     HTTP_LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
     HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
     return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    # Wrap FastAPI's default 422 in our error envelope for a consistent contract.
+    details = [
+        {"loc": ".".join(str(p) for p in e.get("loc", ())), "msg": e.get("msg", "")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "validation_error",
+                "message": "Request validation failed.",
+                "details": details,
+            }
+        },
+    )
 
 
 @app.exception_handler(Exception)
@@ -77,4 +107,5 @@ def root() -> dict[str, str]:
 
 
 app.include_router(health.router)
-app.include_router(business.router)
+app.include_router(events.router)
+app.include_router(stores.router)

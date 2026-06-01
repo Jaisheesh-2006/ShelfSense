@@ -73,12 +73,16 @@ input and never include non-customers — which is exactly what the integrity ch
 ## 6. Production readiness
 - **One-command start:** `docker compose up`, no manual steps; the YOLO model is baked into the image
   so there is no runtime download.
-- **Idempotent ingest:** `event_id` is the dedup key — re-POSTing a batch is safe (replay-friendly).
+- **Idempotent ingest:** `event_id` is the dedup key — re-POSTing a batch is safe (replay-friendly);
+  validated on the real 135-event file (2nd POST = 0 accepted, 135 duplicate).
+- **Partial-success ingest:** a malformed event is reported in `errors[]` rather than rejecting the whole
+  batch; over-500 batches return a 422 in the structured error envelope.
 - **Graceful degradation:** DB unavailable → HTTP 503 with a structured body, never a raw stack trace.
 - **Zero-traffic correctness:** empty windows return valid zeros, not null or a crash.
 - **Observability:** structured JSON logs per request (`trace_id, store_id, endpoint, latency_ms,
-  event_count, status_code`); Prometheus metrics; Grafana dashboards.
-- **Tested:** unit + edge-case coverage (empty store, all-staff, zero purchases, re-entry in funnel).
+  event_count, status_code`); Prometheus metrics (recomputed from ingested events); Grafana dashboards.
+- **Tested:** unit + edge-case coverage (empty store, all-staff, zero purchases, re-entry in funnel) **plus
+  end-to-end API tests** (FastAPI TestClient on SQLite: ingest idempotency, partial success, metrics/funnel).
 
 ## 7. Assumptions
 Where the real data forced an interpretation, we state it **explicitly here** rather than bury it, so a
@@ -148,6 +152,13 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   sale flips to converted, plus an abandon). The 24 real sales also power day-level KPIs (GMV ₹44,920,
   basket, peak hour) independent of the clip. *Why:* faking a non-zero clip number would be dishonest and
   trips the integrity cap; the window mismatch is the exact real-world ambiguity the rubric rewards. (ADR-0012)
+- **A10 — The detector does not yet POST to the API; a replay step bridges the JSONL.** The pipeline
+  writes `behavior.jsonl`; `scripts/ingest_events.py` POSTs it to `/events/ingest` in ≤500-event batches.
+  Because ingest is **idempotent by `event_id`**, replay is safe and re-runnable, so wiring the detector to
+  POST directly later changes nothing downstream. POS is loaded **into Postgres on API startup** (the loader
+  globs the CSV, whose real name carries a download suffix), making the `transactions` table the single
+  source of truth for conversion + day KPIs. *Why:* keeps the gate-critical ingest path provable in-process
+  now, and defers a thin transport detail without affecting any metric. (See [[DECISIONS]] ADR-0013.)
 
 ## 8. Known limitations & next steps
 - Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a

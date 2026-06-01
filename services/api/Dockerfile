@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir /tmp/common
 COPY services/api/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY services/api/app ./app
+COPY services/api/shelfsense_api ./shelfsense_api
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=12 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "shelfsense_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

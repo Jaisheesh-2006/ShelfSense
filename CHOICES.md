@@ -1,6 +1,6 @@
 # CHOICES — key engineering decisions
 
-Three headline decisions, each with the options weighed, what the AI suggested, what we chose, why,
+Five headline decisions, each with the options weighed, what the AI suggested, what we chose, why,
 and **when we would revisit it**. Full decision log: `docs/wiki/DECISIONS.md`.
 
 ---
@@ -115,3 +115,35 @@ customers**. It directly protects the metric that matters, unlike presence.
 backgrounds dilute the score (so we don't use it on the entrance camera). The score and threshold are
 config and the measure is one function — we'd swap to a learned classifier (c) if a future store's uniform
 weren't a clean colour signal.
+
+---
+
+## Decision 5 — Event ingest: resilient by design, and a thin, testable API over reusable logic
+
+**Context.** `POST /events/ingest` is the acceptance-gate endpoint and the entry to the largest scoring
+bucket. Real pipelines re-send (retries, replays) and occasionally emit a bad record, so ingest has to be
+both **strict** (validate every event) and **forgiving** (one bad event mustn't sink a 500-event batch).
+
+**Options considered.**
+- (a) Type the request body as `list[BehaviorEvent]` and let Pydantic validate the batch.
+- (b) Accept the batch as **raw dicts** and validate each event individually, collecting per-event errors.
+- For dedup: (c) Postgres `ON CONFLICT` upsert vs (d) a portable "query-existing + insert-new + retry"
+  that also works on SQLite.
+
+**What the AI suggested.** It flagged that (a) is cleaner but makes the whole batch 422 on a single bad
+event — breaking the spec's *partial success* — and recommended (b) with idempotent dedup keyed on
+`event_id`. It also caught that our two services both had a top-level package named `app`, which collided
+on the test path and made the API **untestable**; it proposed renaming the API package to `shelfsense_api`.
+
+**Decision.** **(b) raw-dict per-event validation** (≤500, partial success → `errors[]`; idempotent by
+`event_id`) with **(d) portable dedup**; metrics/funnel are **thin adapters over pure
+`shelfsense_common/analytics.py`** (reusing the 2.5 conversion engine); and we **renamed the API package**
+so the whole surface is covered by FastAPI TestClient integration tests on SQLite.
+
+**Why.** Resilience and idempotency are what a reviewer actually tests; keeping the logic pure and the
+handlers thin means the same functions power the API, the Prometheus gauges, and the unit tests — numbers
+can't diverge. The rename fixed a real latent bug and unblocked testing the highest-weighted bucket.
+
+**Trade-off / when we'd revisit.** Raw-dict validation is slightly more code than a typed body, and the
+portable dedup does an extra read vs a native upsert — both cheap at this scale. At very high ingest
+volumes we'd switch to a batched `ON CONFLICT` upsert behind the same idempotent contract.

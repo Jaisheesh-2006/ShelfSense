@@ -59,8 +59,14 @@
   `correlate_conversions` (5-min rule, converted/abandon, `data_confidence`) + `pos_day_metrics` — all in
   `common` so 2.6's API reuses them. **Honest clip: conversion 0%** (browsers only, window mismatch);
   `demo_conversion.py` shows the flip against a real sale. 69 tests pass; ruff clean.
-- ⬜ **Slice 2.6 — API ingest + core metrics.** `POST /events/ingest` (idempotent/dedup/partial/≤500);
-  `GET /stores/{id}/metrics` + `/funnel` (session-based, no double-count). Retire old `/api/v1/*`.
+- ✅ **Slice 2.6 — API ingest + core metrics (ADR-0013).** Renamed api pkg `app`→`shelfsense_api` (un-collided
+  the two `app` packages, unblocking API tests); retired `/api/v1/*`. `POST /events/ingest` — ≤500,
+  **idempotent by `event_id`** (within-batch + DB dedup + IntegrityError fallback), **partial success**
+  (per-event validation; bad → `errors[]`), over-500 → 422 in the error envelope. `GET /stores/{id}/{metrics,
+  funnel}` — thin adapters over **pure `common/analytics.py`** (`compute_funnel`/`compute_store_metrics`,
+  reusing 2.5's `correlate_conversions`/`pos_day_metrics`); session-based, staff-excluded, monotonic funnel.
+  POS loaded into Postgres at startup (glob fallback). **Validated (real data):** 135 events, re-POST = 0/135
+  dup, **unique 2 / conversion 0% / funnel 2→2→0→0**. 82 tests pass (+13); ruff clean.
 - ⬜ **Slice 2.7 — heatmap + anomalies + health.** `/heatmap` (normalised, data_confidence),
   `/anomalies` (queue spike / conversion drop vs 7-day / dead zone; severity + suggested_action), `/health` (STALE_FEED).
 
