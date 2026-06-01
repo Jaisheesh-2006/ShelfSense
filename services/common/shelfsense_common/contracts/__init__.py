@@ -25,6 +25,7 @@ from shelfsense_common.contracts.zones import (
     CameraConfig,
     CameraRole,
     EntranceLine,
+    FloorRegion,
     StoreConfig,
     ZoneName,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "ZoneName",
     "CameraRole",
     "EntranceLine",
+    "FloorRegion",
     "CameraConfig",
     "StoreConfig",
     "STORE",

@@ -18,15 +18,21 @@ from shelfsense_common.contracts import BehaviorEvent
 
 
 class JsonlEventSink:
-    """Append BehaviorEvents to a JSONL file, creating parent directories as needed."""
+    """Append BehaviorEvents to a JSONL file, creating parent directories as needed.
 
-    def __init__(self, path: str | Path) -> None:
+    `truncate=True` starts a fresh file — correct for a single full detection pass (run_once), so a
+    re-run re-exports rather than accumulating stale events from a prior run. The default (append)
+    preserves streaming semantics where a run adds to an existing log.
+    """
+
+    def __init__(self, path: str | Path, truncate: bool = False) -> None:
         self.path = Path(path)
+        self.truncate = truncate
         self._fh = None
 
     def __enter__(self) -> JsonlEventSink:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.path.open("a", encoding="utf-8")
+        self._fh = self.path.open("w" if self.truncate else "a", encoding="utf-8")
         return self
 
     def __exit__(

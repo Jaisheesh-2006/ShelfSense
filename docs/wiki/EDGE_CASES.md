@@ -8,9 +8,13 @@
    ✅ *Handled by design:* counting is per-tracked-person (per `visitor_id`), never per blob — a group
    yields one track/visitor each. No grouping logic needed.
 2. **Staff movement** → classify `is_staff=true` and **exclude from customer metrics**.
-   ✅ *Slice 2.4:* CAM4 back room excluded at source; in customer areas a **presence heuristic** flags
-   `is_staff` for anyone continuously present beyond `staff_min_presence_ms` (e.g. the cashier). The API
-   treats a visitor as staff if **any** of their events is flagged. (Uniform/VLM deferred.)
+   ✅ *Slice 2.4b (ADR-0009):* Brigade staff wear a **complete black uniform**, so `is_staff` is set by a
+   **dark-uniform appearance score** — min of upper/lower-body dark-pixel fraction, reusing the Re-ID crop
+   (`detector/app/staff.py`). Calibrated vs ground truth (5 staff / 2 customers): customers score 0.08–0.19,
+   staff 0.52–0.96. CAM4 back room excluded at source (and empty in-clip). The API treats a visitor as staff
+   if **any** of their events is flagged. The old 90 s **presence heuristic** is demoted to an off-by-default
+   fallback. *Limit:* a genuinely black-clad customer would be misflagged (ours are grey/violet); on bright
+   shelf backgrounds darkness dilutes — one reason the entrance camera counts footfall, not visitors (ADR-0011).
 3. **Re-entry** → same person returning produces `REENTRY` under the **same `visitor_id`**, not a
    new `ENTRY`. ✅ *Slice 2.4:* the Re-ID gallery re-matches a returning visitor; a re-match after an
    absence gap emits `REENTRY`. (Rare on these "already inside" clips, like `ENTRY` — honest.)
@@ -20,8 +24,14 @@
 5. **Billing queue buildup** → track `queue_depth` and emit `BILLING_QUEUE_JOIN`/`ABANDON`. ⬜ Slice 2.5.
 6. **Empty store periods** (5–10 min no customers) → API must return **0 / valid JSON, never null/crash**. ⬜ API (2.6).
 7. **Camera angle overlap** (floor overlaps entry) → **cross-camera dedup**: same person not double-counted.
-   ✅ *Slice 2.4:* appearance Re-ID merges the same shopper across CAM1/CAM2/CAM3 into one `visitor_id`
-   (approximate — ADR-0008/A5).
+   ✅ *Slice 2.4:* appearance Re-ID merges the same shopper across cameras into one `visitor_id`
+   (approximate — ADR-0008/A5). ✅ *Slice 2.4b:* the **entrance camera no longer counts visitors** (footfall
+   only, ADR-0011), removing CAM3↔CAM1/2 overlap double-counting and mall pass-by at source.
+
+8. **Mirror / reflective-surface phantoms** (CAM5 mirror, backlit displays, wall posters) → a reflection
+   is not a person. ✅ *Slice 2.4b (ADR-0010):* a calibrated **walkable-floor mask** drops detections whose
+   foot-point lands off the floor (up on a wall/mirror). Dropped **317** off-floor detections on CAM5.
+   General — also rejects product displays and poster faces. (Beyond the spec's 7; surfaced from the data.)
 
 ## Confidence calibration (graded)
 Do **not** silently drop or falsely elevate low-confidence detections — emit them with their real

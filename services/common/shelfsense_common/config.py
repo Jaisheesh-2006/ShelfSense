@@ -77,7 +77,15 @@ class Settings(BaseSettings):
     # 0.55 collapses 44 fragmented tracks to ~7 unique. Clip-tuned + approximate (see DESIGN A5).
     reid_max_distance: float = 0.55
     reid_reentry_min_gap_ms: int = 5000  # absence before a re-matched visitor counts as REENTRY
-    staff_min_presence_ms: int = 90000  # continuous presence above this => classified is_staff
+    # Staff classification (Slice 2.4b, ADR-0009): Brigade staff wear a complete BLACK uniform; the
+    # two real customers wear grey/violet. Primary signal = dark-uniform appearance. A track is
+    # staff if its mean dark-uniform score (min of upper/lower body dark fraction) >= threshold.
+    staff_darkness_threshold: float = 0.50  # calibrated vs ground truth (5 staff / 2 customers)
+    staff_dark_v_max: int = 70  # HSV Value (0-255) at/below which a pixel is "dark"/near-black
+    # Optional fallback: also flag very-long-present tracks even if not dark (off by default — on a
+    # 2-min clip a browsing customer can dwell long too, and we only have two customers to protect).
+    staff_presence_fallback: bool = False
+    staff_min_presence_ms: int = 90000  # presence-fallback threshold (used only if enabled above)
 
     # --- API ---
     api_host: str = "0.0.0.0"

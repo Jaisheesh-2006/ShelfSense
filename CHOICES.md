@@ -81,3 +81,37 @@ frames are processed.
 **Trade-off / when we'd revisit.** We give up built-in stream replay and back-pressure. That is fine for
 recorded clips and a single store; at 40 live stores we would reintroduce a queue in front of ingest —
 a bounded, well-understood step (and the exact scaling question the follow-up interview probes).
+
+---
+
+## Decision 4 — Staff identification: dark-uniform appearance, not presence time
+
+**Context.** Staff must be excluded from customer metrics, and they dominate this clip — reviewing the
+footage, the store has **5 staff / 2 customers**. With only **two** customers the conversion denominator
+is tiny, so a single staff/customer mistake is a ~50 % error. Getting this right matters more than headcount.
+
+**Options considered.**
+- (a) **Presence-time heuristic** — flag anyone present beyond a long threshold (our first, Slice 2.4 approach).
+- (b) **Dark-uniform appearance** — staff wear a complete black uniform; the customers wear grey/violet.
+- (c) **A learned uniform/colour classifier or VLM** — most accurate, heaviest.
+- (d) **Stockroom (CAM4) enrolment** — anyone in the back room is staff; re-match them on the floor.
+
+**What the AI suggested.** We first shipped the **presence heuristic (a)**. After we confirmed from the
+footage that staff wear a complete black uniform while the two customers wear grey/violet, the AI suggested
+pairing **dark-uniform (b)** as the primary signal with **CAM4 enrolment (d)** as a scaling layer. We
+validated both against the video before trusting them: CAM4 is **empty the whole clip**, so (d) enrols
+nobody here (kept only as a documented scaling idea), and presence (a) risks flagging a long-browsing
+customer — which we can't afford with only two.
+
+**Decision.** **Dark-uniform appearance (b)** as the primary signal (`min` of upper/lower-body dark-pixel
+fraction, reusing the Re-ID crop); presence (a) demoted to an off-by-default fallback; CAM4 enrolment (d)
+kept as a documented scaling mechanism; a learned model (c) deferred.
+
+**Why.** It is cheap (reuses pixels we already sample), offline/CPU-safe, and on the footage it **cleanly
+separates** the two groups (customers 0.08–0.19, staff 0.52–0.96; threshold 0.50) — yielding **exactly 2
+customers**. It directly protects the metric that matters, unlike presence.
+
+**Trade-off / when we'd revisit.** A genuinely black-clothed customer would be misflagged, and bright
+backgrounds dilute the score (so we don't use it on the entrance camera). The score and threshold are
+config and the measure is one function — we'd swap to a learned classifier (c) if a future store's uniform
+weren't a clean colour signal.

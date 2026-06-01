@@ -21,11 +21,13 @@
 - **Converted visitor (POS correlation rule):** a visitor whose session was in the **billing zone
   within the 5-minute window before a POS transaction timestamp** (same store) counts as converted.
   No `customer_id` — correlation is **time-window + store** only.
-- **unique visitors:** distinct `visitor_id`s — assigned to **every tracked customer on first
-  detection in a customer area**, not only to people who cross the entrance line (ADR-0007). Re-ID
-  de-duplicates across cameras and keeps re-entries the *same* visitor. This is the conversion
-  denominator. (Rationale: on ~2-min clips, most shoppers are already inside, so entrance-crossings ≈ 0
-  — see [[DECISIONS]] ADR-0006/0007.)
+- **unique visitors:** distinct **non-staff** `visitor_id`s — assigned to every tracked customer on first
+  detection in a **shopping-floor area (CAM1/CAM2/CAM5)**, not only to people who cross the entrance line
+  (ADR-0007). The **entrance camera (CAM3) contributes footfall only, not visitor counts** — its view is
+  dominated by mall-corridor pass-by ([[DECISIONS]] ADR-0011). Re-ID de-duplicates across cameras and keeps
+  re-entries the *same* visitor; staff (dark-uniform, ADR-0009) are excluded. This is the conversion
+  denominator. (Rationale: on ~2-min clips most shoppers are already inside, so entrance-crossings ≈ 0 —
+  ADR-0006/0007. Validated count on the clip: **2 customers** + 3 staff.)
 - **POS source:** Brigade CSV → `transaction_id` (invoice/order), `timestamp` (order_date+order_time),
   `basket_value` (order total). 24 transactions on 10-Apr ([[GROUND_TRUTH]] §2).
 - **⚠ Window caveat:** clips (~2 min) vs CSV (full day) differ — compute on a comparable/representative
@@ -49,6 +51,16 @@
 - **End:** track lost > `session_timeout` OR outward exit crossing.
 - **Re-entry rule:** a returning visitor (matched by Re-ID) keeps the **same `visitor_id`** and emits
   `REENTRY`, never a second `ENTRY` — so footfall/conversion are not inflated. See [[EDGE_CASES]].
+
+## Staff classification (excluded from customer metrics)
+- **Rule (ADR-0009):** Brigade staff wear a **complete black uniform**, so `is_staff` is set from a
+  **dark-uniform appearance score** — the min of the upper- and lower-body dark-pixel fraction (HSV Value
+  ≤ `staff_dark_v_max`, central column), reusing the Re-ID crop. A track is staff when its mean score ≥
+  `staff_darkness_threshold`. The **stockroom (CAM4) is staff-only** and excluded at source.
+- **Aggregation:** the API treats a visitor as staff if **any** of their events is flagged.
+- **Excluded** from unique visitors, conversion, funnel, heatmap — staff are not customers.
+- **Limits:** a genuinely black-clothed customer would be misflagged (ours are grey/violet); bright shelf
+  backgrounds dilute the score (so the entrance camera is not used for this). See [[EDGE_CASES]] #2.
 
 ## Customer journey
 - Ordered sequence of zones a visitor passes through with timestamps. Append a zone only when dwell
@@ -95,6 +107,9 @@
 | `min_engagement_dwell` | min dwell to count zone engagement | 3 s |
 | `session_timeout` | track-lost duration that ends a session | 30 s |
 | `reentry_window` | gap within which a re-entry is the same visit | 120 s |
+| `staff_darkness_threshold` | mean dark-uniform score ≥ ⇒ `is_staff` (ADR-0009) | 0.50 |
+| `staff_dark_v_max` | HSV Value (0–255) ≤ ⇒ a pixel is "dark"/near-black | 70 |
+| `staff_presence_fallback` | also flag long-present tracks as staff (off by default) | false |
 
 All thresholds via environment variables (no hardcoding). See [[EVENT_SCHEMA]] for how these
 become events and [[API_SPEC]] for how they surface.

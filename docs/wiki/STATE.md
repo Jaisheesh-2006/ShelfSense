@@ -8,12 +8,40 @@
 
 ## Current phase
 
-🟢 **Slice 2.4 done — Re-ID + edge cases; validated against ground truth.** Phase 1 + Slices 2.0–2.4
-complete. Appearance Re-ID (colour histogram) de-duplicates visitors across cameras + re-entries; a tuned
-ByteTrack cuts fragmentation; staff are flagged by presence. **Ground-truth check (user: ~7 people on
-CAM1/2/3):** per-camera over-count was **53 tracks → tuned tracker 44 → Re-ID 9 unique** (live pipeline,
-`reid_max_distance=0.55`; 2 cross-camera merges, 3 staff). Honest, close to 7. Slice 2.5 (billing queue +
-POS correlation → the "converted" half of conversion) next.
+🟢 **Slice 2.4b done — staff identification reworked + CAM5 mirror suppressed; conversion denominator now
+exact.** Phase 1 + Slices 2.0–2.4b complete. Slice 2.5 (billing queue + POS correlation → the "converted"
+half of conversion) next.
+
+### Refined ground truth (user, 2026-06-01)
+The **7 people are store-wide** (all cameras), splitting **2 customers (grey + violet tops) + 5 staff
+(complete black uniform)**. CAM4 (stockroom) is **empty** the whole window; CAM5 has a **mirror** that can
+double-detect its 2 staff. This reframed the goal: the conversion denominator is *customers* = **2**.
+
+### Slice 2.4b (done) — dark-uniform staff, floor mask, entrance=footfall-only
+- **Staff = dark-uniform appearance (ADR-0009):** `detector/app/staff.py` — `uniform_darkness` = min of
+  upper/lower-body dark-pixel fraction (HSV V ≤ `staff_dark_v_max=70`, central column), reusing the Re-ID
+  crop; `StaffClassifier` flags staff when mean ≥ `staff_darkness_threshold=0.50`. Replaces the vague 90 s
+  presence heuristic (now an off-by-default fallback). **Calibrated:** customers score 0.08–0.19, staff
+  0.52–0.96 — clean gap.
+- **CAM5 mirror suppression (ADR-0010):** new `FloorRegion` (polygon + ray-cast `contains`) on
+  `CameraConfig`; detections with foot-point off the walkable floor are dropped. Calibrated via
+  `scripts/calibrate_floor.py` (overlay `frames/CAM5_floor_calibration.jpg`). Live pass dropped **317**
+  off-floor phantoms (back doorway / mirror / accessories light-box).
+- **Entrance = footfall only (ADR-0011, refines ADR-0007):** the ENTRANCE camera (CAM3) emits
+  ENTRY/EXIT/REENTRY only — **no zone-visitor events** (its view is dominated by mall-corridor pass-by).
+  Unique visitors are counted from shopping-floor cams CAM1/CAM2/CAM5. `ZoneTracker` gated on
+  `role is not ENTRANCE` in `main.py`.
+- **Sink fix:** `run_once` now **truncates** the JSONL export (a single full pass re-exports, never
+  accumulates stale events — also closes a re-run double-count). `JsonlEventSink(path, truncate=...)`.
+- **Validated end-to-end (CAM1/2/3/5):** **5 unique = 2 customers + 3 staff.** Customers = **exactly 2**
+  (grey + violet on CAM2) ✅ matches ground truth. Staff 3 (the 5 black staff over-merge in colour-hist
+  Re-ID — ADR-0008 weakness; harmless to conversion as staff are excluded). 52 unit tests pass; ruff clean.
+- **New tooling:** `scripts/diagnose_tracks.py` (per-track foot-point + darkness), `scripts/calibrate_floor.py`.
+
+### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
+- **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram
+  `appearance_signature` + `signature_distance` + pure `ReIDGallery` (nearest-match within `reid_max_distance`,
+  else mint; re-match after a gap ⇒ `REENTRY`). Lightweight, offline-safe — no extra model.
 
 ### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
 - **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram

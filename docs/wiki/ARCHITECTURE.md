@@ -46,9 +46,12 @@ reworked independently. The whole stack starts with one `docker compose up`.
 | **Prometheus + Grafana** | Process metrics + dashboards (observability). | `/metrics` |
 
 ## Camera → role mapping (our 5 cams → spec's 3 roles)
-Entry = **CAM3** (calibrated footfall line) · Main floor = **CAM1 + CAM2** · Billing = **CAM5** ·
-Back room (staff, excluded) = **CAM4**. Cross-camera overlap (CAM1/2/3 near the front) is handled by
-Re-ID de-duplication so one shopper is counted once.
+Entry = **CAM3** (calibrated footfall line — **footfall only, does not count visitors**: its view is
+dominated by mall-corridor pass-by; ADR-0011) · Main floor = **CAM1 + CAM2** · Billing = **CAM5** (with a
+calibrated **walkable-floor mask** so a wall mirror / backlit display can't be counted as people; ADR-0010)
+· Back room (staff, excluded; empty in-clip) = **CAM4**. **Unique visitors are counted from the
+shopping-floor cams (CAM1/CAM2/CAM5)**; cross-camera overlap is handled by Re-ID de-duplication so one
+shopper is counted once, and **staff are excluded by their black uniform** (ADR-0009).
 
 ## Data flow (one visitor)
 1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).

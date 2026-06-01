@@ -47,6 +47,17 @@ docs/raw/
   session counts**, not per-person linking. Documented tradeoff (see [[DECISIONS]] PD-5).
 - **Implication:** footfall = entry/exit counting on **CAM 3**. CAM 4 detections are staff.
   Reference frames saved at `docs/wiki/frames/CAM_*_{10,50,90}pct.jpg`.
+- **People in the clip (user ground truth, 2026-06-01):** across **all cameras** there are exactly
+  **7 distinct people = 2 customers + 5 staff** during the ~2-min window.
+  - **Staff (5)** wear a **complete black uniform** (shirt + trousers) → used as the staff signal
+    (dark-uniform appearance, [[DECISIONS]] ADR-0009). **Customers (2)** wear a **grey** top and a
+    **violet** top — both non-black, so appearance cleanly separates them from staff.
+  - **CAM 4 (stockroom) is empty** the entire window (only boxes / water dispenser / two backpacks) —
+    so the "anyone in the back room = staff" idea enrols nobody here; the room is unused in-clip.
+  - **CAM 5 (checkout) has a mirror / backlit display** that can double-detect its 2 staff (a
+    diagnostic found 10 tracks for 2 people). Handled by a walkable-floor mask ([[DECISIONS]] ADR-0010).
+  - **CAM 3 (entrance) sees mall-corridor pass-by** through the glass — *not* store visitors; the
+    entrance camera therefore counts footfall only, not visitors ([[DECISIONS]] ADR-0011).
 - **Entrance line (calibrated, Slice 2.0):** on CAM 3 the counting line runs along the **front
   edge of the retail wood floor**: `(320,490) → (1140,415)`, `inside_sign=-1` (upper-left wood =
   inside, lower-right dark threshold/mall = outside). Crossing onto the wood = entering the

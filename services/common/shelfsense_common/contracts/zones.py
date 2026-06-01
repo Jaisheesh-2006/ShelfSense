@@ -63,6 +63,34 @@ class EntranceLine(BaseModel):
         return self.side(px, py) == self.inside_sign
 
 
+class FloorRegion(BaseModel):
+    """The walkable floor as a pixel polygon — detections whose foot-point falls OUTSIDE it are
+    ignored (Slice 2.4b). This suppresses physically-impossible detections: mirror reflections and
+    backlit product displays / wall posters, whose apparent "feet" land on a wall, not the floor.
+    A general, calibrated mask (cf. the entrance line); `calibrated=False` flags placeholder coords.
+    """
+
+    vertices: list[tuple[float, float]]  # ordered polygon, pixel coords (1920x1080 frame)
+    calibrated: bool = False
+
+    def contains(self, px: float, py: float) -> bool:
+        """Point-in-polygon by ray casting (odd crossings = inside). Pure, no deps."""
+        verts = self.vertices
+        n = len(verts)
+        if n < 3:
+            return True  # a degenerate region constrains nothing (fail open)
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = verts[i]
+            xj, yj = verts[j]
+            intersects = (yi > py) != (yj > py) and px < (xj - xi) * (py - yi) / (yj - yi) + xi
+            if intersects:
+                inside = not inside
+            j = i
+        return inside
+
+
 class CameraConfig(BaseModel):
     camera_id: str
     file: str
@@ -72,6 +100,8 @@ class CameraConfig(BaseModel):
     # Whether detections here count as customers. Stockroom = staff-only, excluded from footfall.
     is_customer_area: bool = True
     entrance_line: EntranceLine | None = None
+    # Optional walkable-floor mask: foot-points outside it are dropped (reflections/displays).
+    floor_region: FloorRegion | None = None
 
 
 class StoreConfig(BaseModel):
@@ -137,6 +167,23 @@ STORE = StoreConfig(
             role=CameraRole.CHECKOUT,
             primary_zone=ZoneName.CHECKOUT,
             fps=24.98,
+            # Walkable shopping floor at the checkout. Excludes the BACK DOORWAY (top-centre) and
+            # the backlit ACCESSORIES display / mirror band (right) — detections there are
+            # reflections / partial people at the back threshold, not shoppers on the floor
+            # (Slice 2.4b diagnostic: phantom tracks had foot-points at y~220, off the floor).
+            # Calibrated via scripts/calibrate_floor.py. See GROUND_TRUTH §1 / ADR-0010.
+            floor_region=FloorRegion(
+                vertices=[
+                    (120, 1080),
+                    (1310, 1080),
+                    (1330, 700),
+                    (1180, 460),
+                    (740, 400),
+                    (430, 470),
+                    (170, 760),
+                ],
+                calibrated=True,
+            ),
         ),
     ],
 )

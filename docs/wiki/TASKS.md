@@ -48,6 +48,12 @@
   fragmentation; `is_staff` by presence heuristic; groups counted as individuals; confidence carried.
   **Validated vs ground truth (7 on CAM1/2/3):** 53 per-camera → tuned 44 → **9 unique** (live, 0.55).
   `scripts/calibrate_reid.py` for threshold tuning. 40 tests pass; ruff clean. (Approximate — DESIGN A5.)
+- ✅ **Slice 2.4b — Staff by uniform + mirror mask + entrance-as-footfall.** Refined ground truth (7
+  store-wide = **2 customers + 5 staff**). `is_staff` now from a **dark-uniform appearance score**
+  (`detector/app/staff.py`, ADR-0009), replacing the presence heuristic; **`FloorRegion`** mask drops
+  off-floor mirror/display phantoms on CAM5 (ADR-0010, **317 dropped**); the **entrance camera counts
+  footfall only**, visitors from CAM1/2/5 (ADR-0011). JSONL export now truncates per pass.
+  **Validated: 5 unique = 2 customers + 3 staff** (customers exact). 52 tests pass; ruff clean.
 - ⬜ **Slice 2.5 — Billing queue + POS.** `BILLING_QUEUE_JOIN`/`ABANDON` + `queue_depth`; POS
   correlation (5-min billing-zone window → converted). See [[BUSINESS_RULES]].
 - ⬜ **Slice 2.6 — API ingest + core metrics.** `POST /events/ingest` (idempotent/dedup/partial/≤500);

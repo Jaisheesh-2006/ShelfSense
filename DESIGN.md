@@ -35,7 +35,10 @@ component table: `docs/wiki/ARCHITECTURE.md`.
 The store has 5 cameras mapped to functional roles: **Entry** (CAM3, with a calibrated entry line),
 **Main floor** (CAM1/CAM2), **Billing** (CAM5), and a **back room** (CAM4) whose occupants are treated
 as staff and excluded from customer metrics. Overlap between the front cameras is resolved by Re-ID so
-one shopper is counted once.
+one shopper is counted once. Each camera is used for **what it can see honestly**: the **entrance camera
+counts footfall only, not visitors** (its view is dominated by mall-corridor pass-by — §7 A8), and the
+**billing camera applies a walkable-floor mask** so a wall **mirror** / backlit display can't be counted
+as extra people (§7 A7). **Staff** are identified by their **complete black uniform** (§7 A6).
 
 ## 4. How the North Star is computed
 1. **Unique visitors** = distinct `visitor_id`s — one assigned per tracked customer on first
@@ -49,8 +52,11 @@ one shopper is counted once.
 ## 5. Counting integrity (why the number is trustworthy)
 All counting is on **de-duplicated sessions**, never raw detections. This directly defends the metric
 against the failure modes that inflate vendor systems: groups are counted as individuals, re-entries
-do not double-count, and staff are filtered out. Low-confidence detections are *flagged on the event*,
-not silently dropped — so uncertainty is visible rather than hidden.
+do not double-count, **staff are filtered out by their black uniform**, **mirror/display reflections are
+rejected by a floor mask**, and **mall pass-by is excluded by not counting visitors on the entrance
+camera**. Low-confidence detections are *flagged on the event*, not silently dropped — so uncertainty is
+visible rather than hidden. Validated against the user's ground truth (2 customers + 5 staff store-wide):
+the pipeline returns **exactly 2 customers** as the conversion denominator.
 
 Footfall uses **ByteTrack** (stable per-person identity) plus a pure, unit-tested **line-crossing
 state machine** on the entrance camera: an `ENTRY`/`EXIT` fires only when a track's foot-point actually
@@ -98,23 +104,46 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   CAM1 `skincare_aisle`, CAM2 `makeup_aisle`, CAM5 `checkout` (CAM4 `stockroom`); the others are reserved
   for finer sub-zones later. *Why:* the labels are configuration in `zones.py`, not hardcoded logic, so they
   can be renamed/extended without code changes if a canonical layout is supplied. (See [[DECISIONS]] PD-4.)
-- **A5 — Unique-visitor count is approximate (lightweight Re-ID + tuned tracking), calibrated to the one
+- **A5 — Unique-visitor count is approximate (lightweight Re-ID + tuned tracking), calibrated to the
   available ground truth.** With no identity data and an offline CPU gate, we de-duplicate by appearance
-  **colour-histogram** signature, not a trained Re-ID model (ADR-0008). Validated against a user count of
-  **~7 people on CAM1/2/3**: the raw per-camera pipeline found **53** tracks — over-count dominated by
-  **ByteTrack fragmentation** (one shopper → ~8 ids behind shelves), not Re-ID error. A **tuned tracker**
-  (`track_buffer=150`) cut that to 44, and Re-ID at the calibrated `reid_max_distance=0.55` brings the live
-  pipeline to **9 unique** (close to 7). *Caveats:* (i) the threshold is **tuned to this clip** and should
-  be re-validated on new footage; (ii) colour histograms are weak features (dark clothing, varied angles),
-  so look-alikes can still merge and the same person across very different views may not — the count is
-  *meaningfully de-inflated, not exact*; (iii) `is_staff` is a **presence heuristic** (continuous presence
-  ≥ threshold ⇒ staff), not uniform recognition. The signature and threshold are swappable config/one
-  function if higher accuracy is later required.
+  **colour-histogram** signature, not a trained Re-ID model (ADR-0008). The user's ground truth is **7
+  people store-wide = 2 customers + 5 staff**. The raw per-camera pipeline found ~53 tracks — over-count
+  dominated by **ByteTrack fragmentation** (one shopper → ~8 ids behind shelves), not Re-ID error. A
+  **tuned tracker** (`track_buffer=150`) plus Re-ID at `reid_max_distance=0.55`, **staff exclusion (A6)**,
+  the **floor mask (A7)** and **entrance-as-footfall (A8)** bring the live pipeline to **5 unique = 2
+  customers + 3 staff** — the **customer denominator is exactly right (2)**. *Caveats:* (i) the threshold
+  is **tuned to this clip**, re-validate on new footage; (ii) colour histograms are weak features, so the
+  5 black-clad **staff over-merge to 3** — harmless to conversion (staff are excluded) but it under-counts
+  total staff; (iii) the same person across very different views may still split. The count is
+  *meaningfully de-inflated and correct on the metric-critical number*, not exact on staff.
+- **A6 — Staff are identified by their complete black uniform, not by dwell time.** Brigade staff wear
+  black shirt + trousers; the two real customers wear grey/violet. We set `is_staff` from a **dark-uniform
+  appearance score** (min of upper/lower-body dark-pixel fraction, reusing the Re-ID crop; ADR-0009),
+  which cleanly separated them on ground truth (customers 0.08–0.19, staff 0.52–0.96; threshold 0.50). The
+  earlier 90 s-presence heuristic is demoted to an off-by-default fallback. *Why:* far more reliable than
+  presence on a short clip, and metric-critical given only **two** customers. *Limit:* a genuinely
+  black-clothed customer would be misflagged; the score and threshold are config, swappable for a learned
+  classifier if needed.
+- **A7 — A walkable-floor mask suppresses mirror/display phantoms.** CAM5 has a mirror + backlit display;
+  a diagnostic found 10 tracks for 2 staff, with phantom foot-points up on the back wall (y≈220 of 1080).
+  Detections whose **foot-point falls outside a calibrated floor polygon** are dropped (ADR-0010) — it
+  removed **317** off-floor detections and generalises to product displays and poster faces. Only CAM5 is
+  calibrated for now; other cameras fail open.
+- **A8 — The entrance camera contributes footfall, not visitor counts.** CAM3 looks onto the **mall
+  corridor**, so its zone detections are dominated by pass-by pedestrians (the ADR-0006 hazard) and its
+  bright shelves dilute the staff-darkness score. We therefore count unique visitors from the
+  **shopping-floor cameras (CAM1/CAM2/CAM5)** and keep CAM3 for `ENTRY`/`EXIT`/`REENTRY` flow only
+  (ADR-0011). This removed the last 3 spurious "customers" (mall pass-by), giving exactly 2.
+- **A-note — The clip has only 2 genuine customers, so customer-side metrics are illustrative, not
+  statistically robust.** Conversion = converted ÷ 2 is fragile to a single misclassification; the system
+  still computes it honestly and it varies with input — the value is the *correct pipeline*, not a large-N
+  number a 2-minute clip can't provide.
 
 ## 8. Known limitations & next steps
-- The entry line is a per-camera calibration validated against the real video; robust to a fixed camera,
-  not to camera moves. Until Re-ID (next slice), visitor counts are **per-camera and over-count** people
-  in overlapping views; cross-camera dedup and re-entry collapsing fix this. (Visitor definition: §7 A1.)
+- Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a
+  fixed camera, not to camera moves. Cross-camera Re-ID de-duplicates overlaps and collapses re-entries
+  (§7 A5); its weakness is that look-alike **black uniforms over-merge**, under-counting staff (harmless to
+  conversion — staff are excluded). (Visitor definition: §7 A1; staff/floor/entrance handling: A6–A8.)
 - Conversion can mis-attribute in dense billing periods — bounded by the 5-minute rule (§7 A2).
 - At 40 live stores the CPU-bound detector is the bottleneck — scale horizontally per store and put a
   queue in front of ingest. These are deliberate, bounded trade-offs, not oversights.

@@ -184,3 +184,90 @@ What changes vs. our earlier design:
   (2) Re-ID at `reid_max_distance=0.55` (found via `scripts/calibrate_reid.py` sweeping thresholds vs 7)
   brought the **live pipeline to 9 unique** (offline sweep hit 7 with full-track signatures; the live
   pipeline resolves at ~2s so lands at 9). Threshold is **clip-tuned**; re-validate on new footage.
+- ⚠️ **Ground truth refined in Slice 2.4b:** the user later clarified the 7 is **store-wide** and splits
+  **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. This reframed the goal: the
+  conversion denominator is *customers* (2), and staff must be identified, not just counted. See ADR-0009.
+
+---
+
+## ADR-0009 — Staff classification by dark-uniform appearance, not presence time (Slice 2.4b)
+- **Date:** 2026-06-01 · **Status:** Accepted (user directive)
+- **Context:** With the refined ground truth (**5 staff / 2 customers** store-wide), the Slice 2.4
+  `is_staff` **presence heuristic** (continuous presence ≥ 90 s ⇒ staff) is both too vague and dangerous:
+  on a 2-min clip a browsing customer can also dwell long, and with only **two** real customers a single
+  false-flag is a 50 % error on the conversion denominator. The user observed staff wear a **complete
+  black uniform** (shirt + trousers); the two customers wear grey / violet — a real, cheap discriminator.
+- **Decision:** Classify `is_staff` from a **dark-uniform appearance score** (`detector/app/staff.py`).
+  We reuse the very crop the Re-ID signature samples and measure the **min of the upper- and lower-body
+  dark-pixel fraction** (HSV Value ≤ `staff_dark_v_max`, central column only to limit floor/shelf
+  background) — so a *full* black uniform scores high while a half-dark outfit does not. A track is staff
+  if its mean score ≥ `staff_darkness_threshold`. The presence heuristic is **demoted to an optional,
+  off-by-default fallback** (`staff_presence_fallback`). Extraction touches pixels; the policy
+  (`dark_fraction`, `StaffClassifier`) is pure and unit-tested.
+- **Calibration (vs the 7):** clean separation — the **2 customers score 0.08–0.19**, **staff 0.52–0.96**;
+  threshold **0.50** sits in the gap. End-to-end the customer count is **exactly 2** (the grey + violet
+  shoppers on CAM2). Staff resolve to **3** (the 5 black-clad staff over-merge in Re-ID — see Tradeoffs).
+- **Alternatives:** (a) keep presence heuristic — mislabels lingering shoppers; (b) a uniform/colour
+  classifier model or VLM — heavier, gate risk, overkill for a 2-min clip; (c) CAM4 (stockroom)
+  enrolment as a known-staff gallery — **architecturally the right idea and discussed**, but the back
+  room is **empty for the whole window** (verified), so it would enrol nobody here. Kept as a documented
+  scaling mechanism, not the active path.
+- **Trade-offs / honest limits:** (i) on bright retail backgrounds (esp. CAM3 shelves) a dark-clad
+  person's score is **diluted** → unreliable there, one reason the entrance camera no longer counts
+  visitors (ADR-0011); (ii) a genuinely black-clothed *customer* would be misflagged — acceptable here
+  because the two real customers are grey/violet, stated as a DESIGN assumption; (iii) the 5 black staff
+  **over-merge to ~3** under colour-histogram Re-ID (ADR-0008 weakness) — harmless to conversion (staff
+  are excluded from the denominator), so we report it rather than chase it.
+- **Rationale:** offline/CPU-safe, reuses existing pixels, and **nails the metric-critical number** (2
+  customers) — far better than the heuristic it replaces. Threshold + `v_max` are config; the score is
+  one function to swap if a learned classifier is later justified.
+
+---
+
+## ADR-0010 — Walkable-floor mask to suppress mirror/display phantoms on CAM5 (Slice 2.4b)
+- **Date:** 2026-06-01 · **Status:** Accepted
+- **Context:** The user noted CAM5 (checkout) has a **mirror**, so its **2 staff can be detected as ~4**.
+  A diagnostic (`scripts/diagnose_tracks.py`) confirmed over-count: **10 tracks for 2 people**, including
+  phantom tracks whose **foot-point sits at y≈220** (top of a 1080-px frame) — i.e. up on the back
+  doorway / mirror wall, physically impossible for someone standing on the floor.
+- **Decision:** Add a **`FloorRegion`** (pixel polygon + ray-cast `contains`) to `CameraConfig`; drop any
+  detection whose **foot-point falls outside** the walkable floor. Calibrated for CAM5 via
+  `scripts/calibrate_floor.py` (grid + shaded-mask overlay), excluding the back doorway and the backlit
+  ACCESSORIES / mirror band. General by design — it also rejects backlit product displays and wall
+  posters, not just the mirror. Pure geometry, unit-tested.
+- **Result:** the live pass dropped **317 off-floor detections** on CAM5; the bending staffer's
+  foot-point stays inside the mask (verified overlay `frames/CAM5_floor_calibration.jpg`).
+- **Alternatives:** (a) a narrow rectangular mirror mask — less general; (b) rely on Re-ID to merge a
+  reflection with its source — unreliable (reflections differ in scale/pose/lighting); (c) do nothing —
+  inflates checkout/billing analytics. We chose the floor polygon as the principled, reusable option.
+- **Trade-offs:** one calibration step per affected camera; only CAM5 is calibrated for now (others fail
+  open). A real person standing at the very back threshold is also excluded — acceptable, as that is not
+  the checkout floor. Note: on this clip the CAM5 phantoms were dark-clad anyway, so staff-exclusion would
+  have hidden them from the *customer* count regardless — the mask matters for **honest event/funnel
+  counts**, not the denominator.
+
+---
+
+## ADR-0011 — The entrance camera contributes footfall only, not zone-visitor counts (Slice 2.4b)
+- **Date:** 2026-06-01 · **Status:** Accepted (user decision; refines ADR-0007)
+- **Context:** After staff exclusion the pipeline still reported **5 customers, not 2**. The 3 extras were
+  **entrance(CAM3)-only** visitors — the dark-uniform diagnostic frame shows them clearly: people walking
+  the **mall corridor outside the glass** (the ADR-0006 hazard), plus in-store people whose darkness is
+  diluted by the bright shelves behind them. ADR-0007 had `visitor_id`s assigned on **all** customer cams
+  *including CAM3*, so the entrance camera's zone detections polluted the visitor count.
+- **Decision:** The **ENTRANCE camera emits footfall only** — `ENTRY`/`EXIT`/`REENTRY` on the calibrated
+  door line — and **no `ZONE_ENTER`/`DWELL`/`EXIT`** events. **Unique visitors are counted from the
+  shopping-floor cameras (CAM1, CAM2, CAM5).** Implemented by gating the `ZoneTracker` on
+  `camera.role is not ENTRANCE` in `detector/app/main.py`.
+- **Result:** customer count drops to **exactly 2** (the grey + violet shoppers on CAM2); store-wide
+  unique = **5** (2 customers + 3 staff). CAM3 emits **0 zone events** on this clip (and 0 crossings —
+  honest per ADR-0006). Cameras emitting events: CAM1/CAM2/CAM5.
+- **Alternatives:** (a) a CAM3 interior floor mask (ADR-0010 style) — still leaves the bright-background
+  darkness problem and double-counts in-store people who also appear on CAM1/2 unless Re-ID merges them;
+  (b) leave CAM3 counting and document the over-count — honest but less accurate vs the ground truth.
+- **Trade-offs:** the entrance camera no longer contributes to the *visitor* count — correct, because its
+  view is dominated by the mall corridor and its real job is the footfall line. On longer/live feeds with
+  genuine door-crossings, ENTRY/EXIT remain the footfall signal; this changes counting, not the schema.
+- **Rationale:** aligns counting with each camera's real role (entrance = flow; floor = presence), removes
+  mall pass-by + bright-background misclassification in one move, and makes the conversion denominator
+  match reality without any per-number fudging.
