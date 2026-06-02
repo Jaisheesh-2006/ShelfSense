@@ -7,17 +7,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# OpenCV (headless) still needs these shared libs on slim images.
+# opencv-python-headless needs libglib2.0-0 (libgthread) but NOT libgl1 — it's built without OpenGL.
+# Dropping libgl1 avoids pulling the whole mesa/LLVM GL stack (the bulk of this apt step's download).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && apt-get install -y --no-install-recommends libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Shared library first (best layer caching).
 COPY services/common /tmp/common
-RUN pip install --no-cache-dir /tmp/common
+RUN --mount=type=cache,target=/root/.cache/pip pip install /tmp/common
 
+# CPU-only PyTorch (ADR-0017) — the single biggest BUILD win. We run YOLO + ByteTrack on CPU, so the
+# default CUDA build pulls ~2 GB of NVIDIA libs we never use; the CPU wheel is ~200 MB. Installing it
+# first (from PyTorch's CPU index) means ultralytics reuses it instead of pulling the GPU build.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Cache mount is a minor convenience for repeat builds; a fresh reviewer run still downloads once.
 COPY services/detector/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 # Pre-bake the YOLO weights into the image so there's no model download at runtime
 # (keeps `docker compose up` working offline / reliably — acceptance-gate friendly).

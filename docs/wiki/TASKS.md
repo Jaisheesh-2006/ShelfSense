@@ -99,6 +99,10 @@
   ~24-min run targets ~6–8 min) + README `.wslconfig` note to give Docker more cores. **Pending:**
   re-validate `unique_visitors`=2 / funnel 2→2→0→0 on the next full run; if it drifts, step back toward
   7 fps / 560 px.
+- ✅ **Deterministic ids (ADR-0021)** — `visitor_id` numbered in discovery order (`VIS_0001…`) +
+  `event_id` = UUIDv5 of `(store,camera,visitor,type,zone,timestamp)`, filled when blank, preserved on
+  ingest. Re-runs/restarts at the same config now **dedup** instead of accumulating (fixed the
+  `events_total 237 = 131+106` inflation). ruff clean; **110 tests** (+5 `test_event_ids`).
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);

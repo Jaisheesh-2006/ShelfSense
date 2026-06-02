@@ -21,11 +21,38 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Fixed namespace so event_ids are a deterministic function of the event's stable identity.
+_EVENT_ID_NAMESPACE = uuid.UUID("a3f5c8e2-1b4d-4e6f-8a9c-0d1e2f3a4b5c")
 
 
-def _new_event_id() -> str:
-    return str(uuid.uuid4())
+def deterministic_event_id(
+    store_id: str,
+    camera_id: str,
+    visitor_id: str,
+    event_type: object,
+    zone_id: str | None,
+    timestamp: datetime,
+) -> str:
+    """A stable UUIDv5 derived from the event's identifying fields (ADR-0021).
+
+    The timestamp is recording-relative (clip start + frame offset) and detection is reproducible
+    for a given clip+config, so the same event always hashes to the same id — making a re-POST (a
+    detector restart / identical re-run) idempotent instead of accumulating duplicates. Volatile
+    fields (confidence, dwell) are intentionally excluded so float jitter can't change the id.
+    """
+    key = "|".join(
+        [
+            store_id,
+            camera_id,
+            visitor_id,
+            str(event_type),
+            zone_id or "",
+            timestamp.astimezone(UTC).isoformat(),
+        ]
+    )
+    return str(uuid.uuid5(_EVENT_ID_NAMESPACE, key))
 
 
 class BehaviorEventType(StrEnum):
@@ -60,7 +87,7 @@ class BehaviorEvent(BaseModel):
 
     model_config = ConfigDict(use_enum_values=False)
 
-    event_id: str = Field(default_factory=_new_event_id)
+    event_id: str = Field(default="")  # blank -> filled deterministically (see validator below)
     store_id: str
     camera_id: str
     visitor_id: str
@@ -88,3 +115,19 @@ class BehaviorEvent(BaseModel):
         if event_type in _ZONELESS_TYPES and v is not None:
             raise ValueError(f"{event_type.value} must have zone_id=None")
         return v
+
+    @model_validator(mode="after")
+    def _ensure_event_id(self) -> BehaviorEvent:
+        """Fill a deterministic event_id when one wasn't supplied (the detector path). An id given
+        upstream (e.g. on ingest of an already-emitted event) is preserved, so the dedup key stays
+        stable end to end and a re-POST is idempotent (ADR-0021)."""
+        if not self.event_id:
+            self.event_id = deterministic_event_id(
+                self.store_id,
+                self.camera_id,
+                self.visitor_id,
+                self.event_type,
+                self.zone_id,
+                self.timestamp,
+            )
+        return self

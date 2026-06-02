@@ -78,12 +78,19 @@ class ReIDGallery:
         reentry_min_gap_ms: int = 5000,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
-        import uuid
-
         self.max_distance = max_distance
         self.reentry_min_gap_ms = reentry_min_gap_ms
-        self._id_factory = id_factory or (lambda: f"VIS_{uuid.uuid4().hex[:6]}")
+        # Deterministic by default (ADR-0021): visitors are numbered in discovery order
+        # (VIS_0001, VIS_0002, ...). Detection/tracking are reproducible for a given clip+config, so
+        # an identical re-run mints the SAME ids — which, with deterministic event_ids, makes
+        # re-ingest idempotent instead of accumulating. Callers may inject an `id_factory` (tests).
+        self._seq = 0
+        self._id_factory = id_factory or self._next_sequential_id
         self._visitors: list[_GalleryVisitor] = []
+
+    def _next_sequential_id(self) -> str:
+        self._seq += 1
+        return f"VIS_{self._seq:04d}"
 
     def resolve(self, signature: np.ndarray, ts_ms: int) -> Resolution:
         """Match a signature to the nearest visitor within max_distance, else mint a new one."""

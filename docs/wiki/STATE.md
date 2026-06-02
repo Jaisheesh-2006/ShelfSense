@@ -15,8 +15,10 @@ and auto-POSTs its events, and **every endpoint returns real, internally-consist
 funnel 2→2→0→0, heatmap makeup=100, POS 24/₹44,920, anomalies 2× honest-INFO) with zero manual steps.
 Recent: 2.9 compose cleanup (ADR-0016), CPU-only torch + pip cache for fast builds (ADR-0017), 2.10
 per-camera incremental flush so the endpoints fill in *as detection runs* (ADR-0018), and detector
-throughput tuning (sample_fps 10→5, imgsz 640→480, ADR-0019 + README `.wslconfig` note) to fit the
-~10-min budget — **`unique_visitors`=2 re-validation pending the next full run**. Remaining:
+throughput tuning (sample_fps 10→5, imgsz 640→480, ADR-0019) to fit the ~10-min budget, a live
+**React dashboard** (ADR-0020, :8080), and **deterministic event/visitor ids** so re-runs and
+restarts are idempotent — no more DB accumulation (ADR-0021). **Re-validate `unique_visitors`=2 on a
+clean `docker compose down -v` + `up` run.** Remaining:
 **Phase 3 polish** (coverage push, structured-logging fields, optional React dashboard) — plus the
 optional startup **seed** (set aside) for an instant-on demo, and an open call on **Redis's role**
 (today only the `/readyz` probe touches it — either give it a real caching job or remove it).

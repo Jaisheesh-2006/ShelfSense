@@ -573,3 +573,49 @@ What changes vs. our earlier design:
 - **Rationale:** turns "the endpoints exist and update" into a polished, self-evident demo a reviewer
   grasps in seconds — maximising the Part E bonus and the overall first impression — while honouring
   the requested calm, gradient-free, white aesthetic and keeping the bundle and build tiny.
+
+---
+
+## ADR-0021 — Deterministic event_ids + visitor_ids (idempotent re-runs)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** `event_id` was a random `uuid4` and `visitor_id` a random hex (`VIS_<uuid[:6]>`), so
+  **re-running the detector over an existing DB accumulated** instead of replacing — observed live as
+  `events_total = 237 = 131 (run 1) + 106 (run 2)`, inflating `unique_visitors` from the true 2 to 4.
+  Idempotent ingest only dedups *identical re-POSTs* (same id); fresh random ids per run defeated it,
+  and a detector container **restart** would double-post for the same reason.
+- **Decision:** Make both ids reproducible for a given clip+config. **`visitor_id`** is numbered in
+  discovery order (`VIS_0001`, `VIS_0002`, …) by a sequential default `id_factory` on `ReIDGallery`.
+  **`event_id`** is a **UUIDv5** of `(store, camera, visitor, type, zone, timestamp)`, filled by a
+  `model_validator` when blank and **preserved when supplied** (so the detector mints it once and
+  ingest keeps it). The timestamp is **recording-relative** (clip start + frame offset), so the same
+  event always hashes to the same id → a re-POST/restart dedups.
+- **Boundary (honest):** ids are deterministic only for the **same clip + same config** — changing
+  `fps`/`imgsz` resamples frames, so the same real moment lands on a different `ts_ms` → a new id.
+  That's *correct*: a different sampling is a different measurement (reset the DB with `down -v`).
+  Volatile fields (`confidence`, `dwell`) are excluded so float jitter can't change the id; and the
+  cross-run match is **best-effort** against ML float nondeterminism across threads — vastly better
+  than random, not a cryptographic guarantee.
+- **Alternatives:** (a) keep random ids + always `down -v` — a fragile foot-gun (exactly what bit us);
+  (b) hash `visitor_id` from the appearance signature — signatures drift between runs, so the
+  discovery-order counter is more stable; (c) a destructive per-store "replace on ingest" API op —
+  couples the detector to a delete path and loses the clean append-only, idempotent contract.
+- **Validated:** ruff clean; **110 tests** (+5 `test_event_ids`: same-identity→same-id, pure-hash
+  match, different-identity→different-id, supplied-id preserved, sequential visitor numbering).
+- **Rationale:** re-runs and restarts are now **idempotent** — the metrics stay correct without manual
+  DB resets, closing the accumulation foot-gun while keeping ingest append-only and honest.
+
+---
+
+## ADR-0022 — Drop `libgl1` from the detector image (headless OpenCV)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** On a cold build the detector's apt step (`libgl1 libglib2.0-0`) pulled the entire
+  **mesa/LLVM OpenGL stack** (libz3, libdrm, libelf, …) and was the dominant download. We use
+  **`opencv-python-headless`**, which is built *without* OpenGL — `libgl1` was cargo-culted from the
+  non-headless install instructions.
+- **Decision:** Install only **`libglib2.0-0`** (for `libgthread`, which cv2 does need); drop `libgl1`.
+- **Validated:** a standalone image with *only* `libglib2.0-0` imported **cv2 4.13.0** and ran a
+  `cvtColor` successfully (`CV2_IMPORT_OK`). (A first attempt died on a transient pip **hash mismatch**
+  = a corrupted download — a network-reliability symptom, not a libgl1 issue; an identical retry passed,
+  confirming the corruption is intermittent and points at the WSL2 MTU path.)
+- **Rationale:** a smaller, faster detector build with **no runtime impact**. One-line revert (re-add
+  `libgl1`) if a future OpenCV build ever dlopen's GL.
