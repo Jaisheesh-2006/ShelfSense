@@ -72,6 +72,8 @@ shopper is counted once, and **staff are excluded by their black uniform** (ADR-
 4. **Behavioural events** — crossing the entrance line → `ENTRY`/`EXIT`; zone presence →
    `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30 s); billing → `BILLING_QUEUE_JOIN`/`ABANDON`.
 5. **Ingest** — events POSTed in batches to `/events/ingest`; deduped by `event_id` (idempotent).
+   **Implemented (Slice 2.8, ADR-0015):** the detector's `HttpEventSink` auto-POSTs as part of its run
+   (a `FanOutSink` also writes the JSONL), so `docker compose up` feeds the API with no manual replay.
 6. **Serve** — metrics/funnel/heatmap/anomalies computed from stored events at query time; conversion
    joins POS via the 5-minute billing-window rule ([[BUSINESS_RULES]]).
 

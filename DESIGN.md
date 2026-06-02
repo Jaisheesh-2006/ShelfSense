@@ -152,13 +152,16 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   sale flips to converted, plus an abandon). The 24 real sales also power day-level KPIs (GMV ₹44,920,
   basket, peak hour) independent of the clip. *Why:* faking a non-zero clip number would be dishonest and
   trips the integrity cap; the window mismatch is the exact real-world ambiguity the rubric rewards. (ADR-0012)
-- **A10 — The detector does not yet POST to the API; a replay step bridges the JSONL.** The pipeline
-  writes `behavior.jsonl`; `scripts/ingest_events.py` POSTs it to `/events/ingest` in ≤500-event batches.
-  Because ingest is **idempotent by `event_id`**, replay is safe and re-runnable, so wiring the detector to
-  POST directly later changes nothing downstream. POS is loaded **into Postgres on API startup** (the loader
-  globs the CSV, whose real name carries a download suffix), making the `transactions` table the single
-  source of truth for conversion + day KPIs. *Why:* keeps the gate-critical ingest path provable in-process
-  now, and defers a thin transport detail without affecting any metric. (See [[DECISIONS]] ADR-0013.)
+- **A10 — The detector auto-feeds the API; the stack populates itself on `docker compose up`.** The
+  detector fans each event to a JSONL file (inspectable + replayable) **and** an `HttpEventSink` that POSTs
+  batches of ≤500 straight to `/events/ingest` (Slice 2.8, ADR-0015) — no manual step. It waits for the API
+  to be healthy, retries with backoff, and is **non-fatal** (if the API is down the events still land in the
+  JSONL, so the detector never crashes). Because ingest is **idempotent by `event_id`**, a restart or a
+  `scripts/ingest_events.py` replay on top never double-counts. POS is loaded **into Postgres on API startup**
+  (the loader globs the CSV, whose real name carries a download suffix), making the `transactions` table the
+  single source of truth for conversion + day KPIs. *Caveat:* auto-feed relies on live detection finishing
+  within the reviewer's window; a startup **seed** is the documented timing safety-net if a slow CPU would
+  otherwise leave the endpoints briefly empty. (See [[DECISIONS]] ADR-0013/0015.)
 - **A11 — Anomaly detection is built correctly but *honestly dormant* on a 2-min clip.** The spec's
   conversion-drop ("vs 7-day average") and dead-zone ("no visits 30 min") checks can't be truthfully
   evaluated with one day of data and a 2-minute window. So the conversion-drop check uses a **documented

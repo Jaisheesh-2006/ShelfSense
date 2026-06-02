@@ -8,10 +8,23 @@
 
 ## Current phase
 
-🟢 **Slice 2.7 done — heatmap + anomalies + health. Phase 2 complete: every prescribed endpoint exists.**
-Phase 1 + Slices 2.0–2.7 done. The API now serves `/stores/{id}/{metrics,funnel,heatmap,anomalies}` +
-`/health`, all computed live from ingested events, all honest about the 2-min clip's limits. Remaining
-work is **Phase 3 polish** (coverage push, logging fields, the bonus React dashboard, final gate dry-run).
+🟢 **Slice 2.8 done — the detector auto-feeds the API; the loop is closed.** Phase 1 + Slices 2.0–2.8 done.
+Every prescribed endpoint exists *and* on `docker compose up` the detector now POSTs its events straight
+to `/events/ingest` (no manual replay), so the endpoints populate themselves. Remaining work is **Phase 3
+polish** (compose cleanup of legacy scaffolds, coverage push, logging fields, optional React dashboard,
+final clean-machine gate dry-run) — plus the optional startup **seed** (set aside) as a demo timing net.
+
+### Slice 2.8 (done) — detector → API auto-feed (ADR-0015)
+- **`HttpEventSink`** (`common/sinks.py`): buffers `BehaviorEvent`s and POSTs batches of ≤500 to
+  `{API_BASE_URL}/events/ingest` (stdlib `urllib`, no new dep). Bounded wait-for-ready on enter, per-batch
+  retry+backoff, **non-fatal** on failure (logs + drops; JSONL still has it → no crash). Idempotent ingest
+  makes restarts/replays safe. **`FanOutSink`** writes each event to JSONL **and** the API at once.
+- **Detector `run_once`** now fans to `[JsonlEventSink, HttpEventSink]` (HTTP gated on `detector_post_to_api`)
+  and logs `posted_to_api`. **Compose:** `detector` depends on `api` (`service_healthy`), gets `API_BASE_URL`,
+  and bind-mounts `./data/events` so the JSONL is inspectable on the host.
+- **Validated:** 102 tests pass (+7 `test_http_sink`); ruff clean. End-to-end (sink → real API → metrics, no
+  replay): **135/135 events posted**, `/metrics` unique_visitors 2 / conversion 0%, funnel 2→2→0→0, 24 POS
+  txns. `scripts/ingest_events.py` demoted to a dev/replay fallback. New knobs in `.env.example`.
 
 ### Slice 2.7 (done) — heatmap + anomalies + health (ADR-0014)
 - **Pure logic in `common/analytics.py`:** `compute_heatmap` (per-zone distinct-customer visits + avg
@@ -223,13 +236,16 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
 ## ▶ Next action — Phase 3 (production hardening, AI docs, dashboard)
-Every prescribed endpoint now exists. Phase 3 is **polish + packaging** ([[TASKS]] Phase 3):
-1. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, event_count,
-   status_code` on each request; confirm graceful degradation (DB down → 503, no stack trace).
-2. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
-3. **Live dashboard (Part E, bonus)** — a small **React** screen with ≥1 metric updating as events flow.
-4. **Final acceptance-gate dry-run** — `docker compose up` on a clean machine; zero manual steps;
-   `/metrics`/`/events/ingest` respond; `DESIGN.md`+`CHOICES.md` present; nothing crashes.
+Every prescribed endpoint exists **and the stack now feeds itself** (2.8). Phase 3 is **polish + packaging**
+([[TASKS]] Phase 3):
+1. **Compose cleanup + clean-machine gate dry-run** — drop the legacy redpanda + tracker/analytics
+   scaffolds; `docker compose up --build` from a fresh checkout with zero manual steps; confirm the
+   detector auto-feed populates the endpoints and nothing crashes. (Optionally add the startup **seed**
+   as a timing net so the endpoints aren't empty while detection runs.)
+2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per request;
+   confirm graceful degradation (DB down → 503, no stack trace).
+3. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
+4. **Live dashboard (Part E, bonus)** — a small **React** screen with ≥1 metric updating as events flow.
 5. Keep `DESIGN.md`/`CHOICES.md` in sync (ongoing).
 
 ## Notes / env

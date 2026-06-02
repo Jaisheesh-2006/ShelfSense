@@ -75,6 +75,12 @@
   ok confidence; dead-zone is span-guarded → both INFO (no false alerts) on the 2-min clip. **Validated:**
   heatmap makeup=100; `/health` ok→stale under strict. 95 tests pass (+18); ruff clean.
   **→ Phase 2 complete: every prescribed endpoint exists.**
+- ✅ **Slice 2.8 — detector → API auto-feed (ADR-0015).** Closed the loop: `HttpEventSink` (batched ≤500 POST
+  to `/events/ingest`, stdlib urllib, wait-for-ready + retry, **non-fatal**) + `FanOutSink` in `common/sinks.py`;
+  detector `run_once` fans events to JSONL **and** the API (gated on `detector_post_to_api`). Compose: `detector`
+  depends on `api` healthy, `API_BASE_URL`, events bind-mounted for host inspection. `scripts/ingest_events.py`
+  demoted to a dev/replay fallback. **Validated:** 102 tests (+7 `test_http_sink`); end-to-end 135/135 posted
+  sink→API→`/metrics` (unique 2, funnel 2→2→0→0) **with no replay**. → `docker compose up` now self-feeds.
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);

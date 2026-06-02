@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     tracker_cfg: str = "bytetrack_shelfsense.yaml"  # tuned ByteTrack (less fragmentation)
     crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
     events_jsonl_path: str = "/data/events/behavior.jsonl"  # where the pipeline writes events
+    # Detector -> API auto-feed (Slice 2.8, ADR-0015): the detector POSTs its events straight to the
+    # API so `docker compose up` populates the endpoints with no manual replay. Idempotent ingest
+    # makes re-runs safe. Non-fatal: if the API is down the events still land in the JSONL above.
+    api_base_url: str = "http://api:8000"  # in-container API base the detector POSTs to
+    detector_post_to_api: bool = True  # auto-POST emitted events to /events/ingest
+    ingest_batch_size: int = 500  # <= the API's per-request cap (API_SPEC)
+    ingest_wait_s: float = 60.0  # max seconds to wait for the API to be ready before posting
+    ingest_max_retries: int = 5  # per-batch POST retries (backoff) before dropping to JSONL-only
     # Clip wall-clock start (store-local), approx from the burnt-in CCTV overlay (~20:10 IST,
     # 10-Apr-2026). Used to turn per-frame media time into an absolute UTC event timestamp.
     clip_start_iso: str = "2026-04-10T20:10:00+05:30"

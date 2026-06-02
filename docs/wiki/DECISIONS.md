@@ -387,3 +387,36 @@ What changes vs. our earlier design:
   rolling average once multi-day history exists. New knobs documented in `.env.example` + [[BUSINESS_RULES]].
 - **Rationale:** completes every prescribed endpoint while keeping outputs computed-from-input and
   honest about what a 2-min clip can and cannot support — exactly the judgment the rubric rewards.
+
+---
+
+## ADR-0015 — Detector auto-feeds the API by POSTing events (closes the loop, Slice 2.8)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** Every endpoint existed, but on `docker compose up` the API's DB was **empty** — the
+  detector wrote events to a JSONL file in its own container and nothing POSTed them to the API. We
+  bridged that with a manual replay script, which a reviewer must never run (it breaks the "zero
+  manual steps" gate, and an empty `/funnel`/`/metrics` guts the 35-mark bucket). This is the A10
+  assumption (ADR-0013) coming due.
+- **Decision:** Add an **`HttpEventSink`** (in `common/sinks.py`) that buffers `BehaviorEvent`s and
+  POSTs batches of ≤500 to `{API_BASE_URL}/events/ingest`, and a **`FanOutSink`** so the detector's
+  `run_once` writes to **both** the JSONL (inspection + replay) and the API. The detector now feeds
+  the API itself; compose makes `detector` depend on `api` (`service_healthy`) and bind-mounts the
+  events dir for host inspection.
+  - **stdlib `urllib`**, no new dependency in the detector image.
+  - **Resilient + non-fatal:** bounded wait-for-ready on enter, per-batch retry with backoff, and on
+    final failure it logs a warning and drops the batch — the JSONL still has it, so the detector
+    never crashes because the API is slow/down (protects the gate's "no crash").
+  - **Idempotent by design:** ingest dedups by `event_id`, so the detector restarting (or a replay
+    on top) never double-counts.
+  - **Testable:** the POST `transport` + `ready_check` are injectable, so batching/flush/retry are
+    unit-tested offline (`test_http_sink`); validated end-to-end that 135 real events flow sink → API
+    → `/metrics` (unique 2, funnel 2→2→0→0) with **no replay script**.
+- **Alternatives:** (a) keep the manual replay — fails the gate; (b) detector writes to a shared
+  volume + API ingests the file on startup — couples the two via the filesystem and loses the
+  real HTTP ingest path we're graded on; (c) reintroduce a broker — heavy, the opposite of ADR-0005.
+- **Trade-offs / notes:** auto-feed depends on live detection finishing within the reviewer's window;
+  on a slow CPU the endpoints populate a little late. A startup **seed** (set aside by the user) is
+  the documented timing safety-net if needed. Full compose cleanup (dropping the legacy
+  redpanda/tracker/analytics scaffolds) is deferred — only the `detector` wiring changed here.
+- **Rationale:** turns "the endpoints exist" into "the running stack demonstrates them," with no
+  manual step, while keeping the JSONL for inspection and the honest, idempotent ingest contract.

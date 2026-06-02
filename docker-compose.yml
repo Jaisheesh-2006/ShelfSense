@@ -86,11 +86,15 @@ services:
     environment:
       <<: *app-env
       CCTV_DIR: /data/cctv
+      API_BASE_URL: http://api:8000   # detector POSTs emitted events here (auto-feed, ADR-0015)
     volumes:
       # CCTV clips are local-only (gitignored). Mounted read-only for detection.
       - "./docs/raw/CCTV Footage/CCTV Footage:/data/cctv:ro"
+      # Emitted events also written here, so the JSONL is inspectable on the host.
+      - "./data/events:/data/events"
     depends_on:
-      redpanda:
+      # Wait for the API to be healthy, then auto-POST events to /events/ingest (no manual replay).
+      api:
         condition: service_healthy
     restart: unless-stopped
 

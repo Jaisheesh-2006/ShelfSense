@@ -1,8 +1,9 @@
-"""Replay behaviour events into the API (POST /events/ingest), then print the live metrics/funnel.
+"""Dev/replay fallback: POST a behavior.jsonl into the API, then print the live metrics/funnel.
 
-Bridges the pipeline (which writes behavior.jsonl) to the Slice 2.6 API until the detector POSTs
-directly (deferred — see DESIGN Assumptions). Re-running demonstrates **idempotency**: the second
-pass reports the same events as `duplicates` and the metrics do not change.
+As of Slice 2.8 (ADR-0015) the **detector auto-POSTs** its events to `/events/ingest`, so the stack
+feeds itself with no manual step. This script remains useful for (a) replaying a pre-recorded JSONL
+into a fresh API, and (b) demonstrating **idempotency**: re-running reports the same events as
+`duplicates` and the metrics do not change.
 
 Usage (API must be running, e.g. `docker compose up` or `uvicorn shelfsense_api.main:app`):
     python scripts/ingest_events.py

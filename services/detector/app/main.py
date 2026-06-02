@@ -30,7 +30,7 @@ from shelfsense_common.contracts import (
     EventMetadata,
 )
 from shelfsense_common.logging import configure_logging, get_logger
-from shelfsense_common.sinks import JsonlEventSink
+from shelfsense_common.sinks import EventSink, FanOutSink, HttpEventSink, JsonlEventSink
 from shelfsense_common.worker import GracefulRunner
 
 from app.billing import BillingTracker
@@ -51,7 +51,7 @@ def process_camera(
     tracker: PersonTracker,
     registry: VisitorRegistry,
     staff: StaffClassifier,
-    sink: JsonlEventSink,
+    sink: EventSink,
     settings: Settings,
     log,
     emitted_visitors: set[str],
@@ -277,8 +277,22 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     }
     emitted_visitors: set[str] = set()  # distinct GLOBAL visitors who produced an event
 
+    # Fan each event to the JSONL (inspectable + replayable) and, when enabled, straight to the API
+    # via POST so `docker compose up` populates the endpoints with no manual replay (ADR-0015).
     # truncate: a single full detection pass re-exports the JSONL, never appends stale events.
-    with JsonlEventSink(settings.events_jsonl_path, truncate=True) as sink:
+    sinks: list[EventSink] = [JsonlEventSink(settings.events_jsonl_path, truncate=True)]
+    http_sink: HttpEventSink | None = None
+    if settings.detector_post_to_api:
+        http_sink = HttpEventSink(
+            settings.api_base_url,
+            batch_size=settings.ingest_batch_size,
+            wait_s=settings.ingest_wait_s,
+            max_retries=settings.ingest_max_retries,
+            log=log,
+        )
+        sinks.append(http_sink)
+
+    with FanOutSink(sinks) as sink:
         for camera in cameras:
             clip_path = cctv_dir / camera.file
             if not clip_path.exists():
@@ -289,8 +303,16 @@ def run_once(settings: Settings, log) -> dict[str, int]:
             )
             for key, value in counts.items():
                 totals[key] += value
-        # unique_visitors = distinct GLOBAL ids that produced an event (Re-ID-deduped).
-        log.info("detection_pass_complete", unique_visitors=len(emitted_visitors), **totals)
+
+    # Logged after the sinks close so the HTTP sink's final batch is already flushed/counted.
+    # unique_visitors = distinct GLOBAL ids that produced an event (Re-ID-deduped).
+    posted = http_sink.posted if http_sink is not None else 0
+    log.info(
+        "detection_pass_complete",
+        unique_visitors=len(emitted_visitors),
+        posted_to_api=posted,
+        **totals,
+    )
     return {**totals, "unique_visitors": len(emitted_visitors)}
 
 
