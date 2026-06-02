@@ -20,7 +20,7 @@ ShelfSense watches a store's camera feeds and produces retail metrics:
 It does this with an event-driven pipeline:
 
 ```
-CCTV → detector (find people) → tracker (follow them) → analytics (turn into metrics) → API → dashboard
+CCTV → detector (find + track + Re-ID people → events) → API (ingest + compute metrics) → dashboard
 ```
 
 ---
@@ -43,6 +43,21 @@ That starts everything. Once it's up:
 | Grafana dashboards | http://localhost:3000 |
 
 To stop it: `docker compose down`
+
+### Run it fast (recommended for reviewers)
+
+The detector runs YOLO on **CPU**, so give Docker some headroom or the first run drags:
+
+- **Give Docker ~8 CPUs / 10 GB.** Docker Desktop → **Settings → Resources** (Hyper-V backend); or on
+  the **WSL2 backend** put this in `C:\Users\<you>\.wslconfig`, then run `wsl --shutdown`:
+  ```ini
+  [wsl2]
+  processors=8
+  memory=10GB
+  ```
+- The **first `--build` is heavy** (YOLO/Torch downloaded once, then cached); later runs are quick.
+- **No manual steps** — the stack feeds itself. The numbers **appear progressively** as each camera
+  is processed (a few minutes on CPU); `/stores/ST1008/metrics` fills in while detection runs.
 
 ---
 
@@ -68,10 +83,8 @@ docs/
   wiki/           # living project knowledge base (design, decisions, rules)
 services/
   common/         # shared code: event contracts, config, logging
-  detector/       # finds people in frames (YOLO)
-  tracker/        # follows each person across frames (ByteTrack)
-  analytics/      # turns movement into business metrics
-  api/            # serves the metrics (FastAPI)
+  detector/       # finds, tracks & Re-IDs people, emits behavioural events (YOLO + ByteTrack)
+  api/            # ingests events, computes metrics, serves them (FastAPI)
 frontend/         # dashboard (React)
 infra/            # Docker, Prometheus, Grafana config
 tests/            # automated tests
@@ -95,15 +108,16 @@ The full design lives in the **wiki** — start at [docs/wiki/README.md](docs/wi
 
 ## Status
 
-🟢 **Phase 1 complete** — the full stack runs with one command; the API serves health,
-metrics, and business endpoints (computed from real data, never hardcoded).
+🟢 **Phases 1 & 2 complete** — `docker compose up` runs the full stack with one command; the
+detector counts people from the real clips and **auto-feeds** the API, which serves health, metrics,
+funnel, heatmap, and anomaly endpoints (computed from real data, never hardcoded).
 
-🟡 **Phase 2 in progress** — making the cameras actually count people and produce live metrics.
+🟡 **Phase 3 in progress** — production hardening + a live dashboard.
 See [docs/wiki/TASKS.md](docs/wiki/TASKS.md).
 
 ---
 
 ## Tech stack
 
-Python · FastAPI · YOLO + ByteTrack · Redpanda (Kafka-compatible) · PostgreSQL · Redis ·
-React · Docker Compose · Prometheus + Grafana.
+Python · FastAPI · YOLO + ByteTrack · PostgreSQL · Redis · React · Docker Compose ·
+Prometheus + Grafana.

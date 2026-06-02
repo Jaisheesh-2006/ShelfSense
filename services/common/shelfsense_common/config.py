@@ -55,7 +55,14 @@ class Settings(BaseSettings):
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
 
     # --- Tracking / behavioural events (Slice 2.2) ---
-    tracker_sample_fps: float = 10.0  # higher than detection fps: ByteTrack needs denser frames
+    # Frames sampled per second of video for tracking. Lowered 10->5 (ADR-0019) to roughly halve the
+    # detector's CPU wall-time so a full pass fits the reviewer's window; the tuned track_buffer
+    # bridges the wider inter-frame gaps. Speed/accuracy trade — re-validate the unique-customer
+    # count (=2 on this clip) after changing it.
+    tracker_sample_fps: float = 5.0
+    # YOLO inference image size, longest side (ADR-0019). Lowered 640->480: ~1.6x faster per frame
+    # on CPU for a small accuracy cost; must be a multiple of 32 (stride). Re-validate detections.
+    detector_imgsz: int = 480
     tracker_cfg: str = "bytetrack_shelfsense.yaml"  # tuned ByteTrack (less fragmentation)
     crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
     events_jsonl_path: str = "/data/events/behavior.jsonl"  # where the pipeline writes events

@@ -4,7 +4,8 @@
 # Context: the detector fans events to JSONL + HTTP so `docker compose up` feeds the API itself. The
 #   HTTP transport + readiness check are injectable so batching/flush/retry are tested offline.
 # Constraints: pure/deterministic, no real sockets; cover <=500 batching, final flush on exit,
-#   idempotent re-send shape, give-up-after-retries (non-fatal), and FanOut fanning to all children.
+#   on-demand incremental flush (per-camera, ADR-0018), idempotent re-send shape,
+#   give-up-after-retries (non-fatal), and FanOut fanning write+flush to all children.
 # Output: pytest tests using a fake transport that records the POSTed bodies.
 
 from __future__ import annotations
@@ -69,6 +70,29 @@ def test_batches_at_size_then_final_flush() -> None:
     assert sink.posted == 3
 
 
+def test_flush_posts_buffered_events_immediately() -> None:
+    # Incremental flush (ADR-0018): the detector calls flush() after each camera so a partial buffer
+    # is POSTed on demand and the API populates progressively, not only at the end of the run.
+    rec = _Recorder()
+    with _sink(rec, batch_size=500) as sink:
+        sink.write(ev("a"))
+        sink.write(ev("b"))
+        sink.flush()  # camera 1 done -> push the 2 buffered events now
+        assert [len(p["events"]) for _, p in rec.calls] == [2]
+        sink.write(ev("c"))
+        sink.flush()  # camera 2 done -> push again
+    assert [len(p["events"]) for _, p in rec.calls] == [2, 1]
+    assert sink.posted == 3
+
+
+def test_explicit_flush_when_empty_is_noop() -> None:
+    rec = _Recorder()
+    with _sink(rec, batch_size=500) as sink:
+        sink.flush()  # nothing buffered -> no POST
+        sink.flush()
+    assert rec.calls == []
+
+
 def test_no_events_no_post() -> None:
     rec = _Recorder()
     with _sink(rec):
@@ -119,6 +143,7 @@ def test_recovers_on_a_later_attempt() -> None:
 class _Spy:
     def __init__(self) -> None:
         self.entered = self.exited = False
+        self.flushes = 0
         self.events: list[str] = []
 
     def __enter__(self) -> _Spy:
@@ -131,6 +156,9 @@ class _Spy:
     def write(self, event: BehaviorEvent) -> None:
         self.events.append(event.visitor_id)
 
+    def flush(self) -> None:
+        self.flushes += 1
+
 
 def test_fanout_writes_to_all_and_manages_lifecycle() -> None:
     a, b = _Spy(), _Spy()
@@ -139,3 +167,11 @@ def test_fanout_writes_to_all_and_manages_lifecycle() -> None:
         fan.write(ev("c2"))
     assert a.events == ["c1", "c2"] == b.events
     assert a.entered and a.exited and b.entered and b.exited
+
+
+def test_fanout_flush_fans_to_all_children() -> None:
+    a, b = _Spy(), _Spy()
+    with FanOutSink([a, b]) as fan:
+        fan.write(ev("c1"))
+        fan.flush()  # per-camera incremental flush fans to every child
+    assert a.flushes == b.flushes == 1

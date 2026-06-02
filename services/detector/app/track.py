@@ -76,6 +76,7 @@ class PersonTracker:
         confidence: float,
         person_class_id: int = 0,
         tracker_cfg: str = "bytetrack.yaml",
+        imgsz: int = 640,
     ) -> None:
         from ultralytics import YOLO  # lazy: heavy import (torch), not needed in unit tests
 
@@ -83,6 +84,7 @@ class PersonTracker:
         self.confidence = confidence
         self.person_class_id = person_class_id
         self.tracker_cfg = self._resolve_tracker_cfg(tracker_cfg)
+        self.imgsz = imgsz  # inference resolution (ADR-0019): lower = faster on CPU
 
     @staticmethod
     def _resolve_tracker_cfg(cfg: str) -> str:
@@ -98,6 +100,7 @@ class PersonTracker:
             conf=self.confidence,
             classes=[self.person_class_id],
             tracker=self.tracker_cfg,
+            imgsz=self.imgsz,  # smaller = faster YOLO inference on CPU (ADR-0019)
             persist=True,  # keep association state across frames of this sequence
             verbose=False,
         )

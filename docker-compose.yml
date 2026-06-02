@@ -2,13 +2,12 @@
 #   docker compose up --build
 #
 # Exposes to the host: api:8000, prometheus:9090, grafana:3000.
-# Postgres/Redis/Redpanda are internal-only (not published) to avoid clashing with local services.
+# Postgres/Redis are internal-only (not published) to avoid clashing with local services.
 
 # Shared environment for the Python services. Sensible defaults so the stack runs with no .env.
 x-app-env: &app-env
   ENVIRONMENT: development
   LOG_LEVEL: INFO
-  STREAM_BOOTSTRAP_SERVERS: redpanda:9092
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
   POSTGRES_DB: shelfsense
@@ -19,26 +18,6 @@ x-app-env: &app-env
 
 services:
   # ---- Infrastructure ----
-  redpanda:
-    image: redpandadata/redpanda:v24.2.7
-    command:
-      - redpanda
-      - start
-      - --mode=dev-container
-      - --smp=1
-      - --memory=1G
-      - --reserve-memory=0M
-      - --overprovisioned
-      - --node-id=0
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
-
   postgres:
     image: postgres:16-alpine
     environment:
@@ -95,28 +74,6 @@ services:
     depends_on:
       # Wait for the API to be healthy, then auto-POST events to /events/ingest (no manual replay).
       api:
-        condition: service_healthy
-    restart: unless-stopped
-
-  tracker:
-    build:
-      context: .
-      dockerfile: services/tracker/Dockerfile
-    environment: *app-env
-    depends_on:
-      redpanda:
-        condition: service_healthy
-    restart: unless-stopped
-
-  analytics:
-    build:
-      context: .
-      dockerfile: services/analytics/Dockerfile
-    environment: *app-env
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
     restart: unless-stopped
 

@@ -159,9 +159,10 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   JSONL, so the detector never crashes). Because ingest is **idempotent by `event_id`**, a restart or a
   `scripts/ingest_events.py` replay on top never double-counts. POS is loaded **into Postgres on API startup**
   (the loader globs the CSV, whose real name carries a download suffix), making the `transactions` table the
-  single source of truth for conversion + day KPIs. *Caveat:* auto-feed relies on live detection finishing
-  within the reviewer's window; a startup **seed** is the documented timing safety-net if a slow CPU would
-  otherwise leave the endpoints briefly empty. (See [[DECISIONS]] ADR-0013/0015.)
+  single source of truth for conversion + day KPIs. The detector **flushes after each camera** (ADR-0018),
+  so the endpoints populate *progressively* as detection runs rather than all-at-once at the end. *Caveat:*
+  the first numbers still appear only after camera 1 (~5 min on CPU); a startup **seed** is the documented
+  timing safety-net for a sub-5-minute demo. (See [[DECISIONS]] ADR-0013/0015/0018.)
 - **A11 — Anomaly detection is built correctly but *honestly dormant* on a 2-min clip.** The spec's
   conversion-drop ("vs 7-day average") and dead-zone ("no visits 30 min") checks can't be truthfully
   evaluated with one day of data and a 2-minute window. So the conversion-drop check uses a **documented

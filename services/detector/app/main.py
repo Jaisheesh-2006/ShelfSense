@@ -249,6 +249,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         confidence=settings.detection_confidence,
         tracker=settings.tracker_cfg,
         sample_fps=settings.tracker_sample_fps,
+        imgsz=settings.detector_imgsz,
         reid_max_distance=settings.reid_max_distance,
         cameras=[c.camera_id for c in cameras],
         events_path=settings.events_jsonl_path,
@@ -259,6 +260,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         settings.detection_confidence,
         settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
+        imgsz=settings.detector_imgsz,
     )
     gallery = ReIDGallery(
         max_distance=settings.reid_max_distance,
@@ -303,6 +305,12 @@ def run_once(settings: Settings, log) -> dict[str, int]:
             )
             for key, value in counts.items():
                 totals[key] += value
+            # Incremental flush (ADR-0018): push THIS camera's events to the API as soon as it's
+            # done, so the endpoints populate progressively across the run instead of only at the
+            # final exit. Idempotent ingest makes the extra POSTs safe; the JSONL still gets all.
+            sink.flush()
+            if http_sink is not None:
+                log.info("camera_posted", camera=camera.camera_id, posted_to_api=http_sink.posted)
 
     # Logged after the sinks close so the HTTP sink's final batch is already flushed/counted.
     # unique_visitors = distinct GLOBAL ids that produced an event (Re-ID-deduped).

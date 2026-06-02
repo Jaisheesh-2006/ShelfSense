@@ -81,6 +81,24 @@
   depends on `api` healthy, `API_BASE_URL`, events bind-mounted for host inspection. `scripts/ingest_events.py`
   demoted to a dev/replay fallback. **Validated:** 102 tests (+7 `test_http_sink`); end-to-end 135/135 posted
   sink→API→`/metrics` (unique 2, funnel 2→2→0→0) **with no replay**. → `docker compose up` now self-feeds.
+- ✅ **Slice 2.9 — compose cleanup (ADR-0016).** Dropped the legacy **redpanda** broker + the dead
+  **tracker**/**analytics** Phase-1 scaffolds from `docker-compose.yml`; deleted their `services/` dirs;
+  removed the unused `STREAM_BOOTSTRAP_SERVERS` env. **Final stack = api, detector, postgres, redis,
+  prometheus, grafana** (all load-bearing; Redis kept for `/readyz`). **Validated:** `docker compose
+  config` parses, six services, ruff clean + 102 tests pass.
+- ✅ **Slice 2.10 — per-camera incremental flush (ADR-0018).** First real on-stack `docker compose up`
+  run surfaced a demo-killer: the auto-feed POSTed only at the final exit, so endpoints read zero for
+  the whole ~24-min CPU detection pass, then jumped. Added `flush()` to the `EventSink` Protocol +
+  `JsonlEventSink` + `FanOutSink`; `run_once` flushes **after each camera** (logs `camera_posted`), so
+  the endpoints climb as detection runs (~4 update points). Idempotent ingest makes the extra POSTs
+  safe; JSONL still gets all. **Validated:** ruff clean + **105 tests** (+3 incremental-flush cases).
+  **🎯 Clean-machine gate dry-run PASSED:** `docker compose up --build` → all 4 cameras processed,
+  131/131 posted, every endpoint real + consistent (unique 2, funnel 2→2→0→0, heatmap makeup=100, POS
+  24/₹44,920, anomalies 2× honest-INFO), zero manual steps, no crash.
+- 🟡 **Perf tuning (ADR-0019)** — detector `sample_fps` 10→5 + YOLO `imgsz` 640→480 (~3–4× faster, the
+  ~24-min run targets ~6–8 min) + README `.wslconfig` note to give Docker more cores. **Pending:**
+  re-validate `unique_visitors`=2 / funnel 2→2→0→0 on the next full run; if it drifts, step back toward
+  7 fps / 560 px.
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);

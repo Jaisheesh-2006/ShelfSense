@@ -420,3 +420,124 @@ What changes vs. our earlier design:
   redpanda/tracker/analytics scaffolds) is deferred — only the `detector` wiring changed here.
 - **Rationale:** turns "the endpoints exist" into "the running stack demonstrates them," with no
   manual step, while keeping the JSONL for inspection and the honest, idempotent ingest contract.
+
+---
+
+## ADR-0016 — Compose cleanup: drop the legacy broker + scaffold services (Slice 2.9)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** The architecture moved to an ingest-centric, no-broker design (ADR-0005): the detector
+  owns all per-person reasoning and auto-POSTs events (ADR-0015); the API owns ingest + analytics.
+  But `docker-compose.yml` still carried three services from the original four-service plan
+  (ADR-0001) that no longer do anything: **`redpanda`** (the dropped Kafka broker) and the
+  **`tracker`** / **`analytics`** **Phase-1 scaffolds** (boot-log-heartbeat stubs whose real
+  responsibilities now live inside `detector` and `api`). Dead services on the critical
+  `docker compose up` path are pure gate risk (extra build time, extra failure surface) and mislead a
+  time-boxed reviewer about what actually runs.
+- **Decision:** Remove the `redpanda`, `tracker`, and `analytics` services from compose; delete the
+  orphaned `services/tracker/` and `services/analytics/` directories (built by nothing after this);
+  drop the now-unused `STREAM_BOOTSTRAP_SERVERS` from the shared compose env. Final stack = **`api`,
+  `detector`, `postgres`, `redis`, `prometheus`, `grafana`** — every service is load-bearing.
+- **Kept deliberately:** **`redis`** (the `/readyz` readiness dependency + documented hot-state cache
+  for the scale story); **`postgres`** (durable event/metrics store); **Prometheus + Grafana**
+  (observability, graded). The old `stream.py` Kafka producer and `contracts/events.py` envelope stay
+  for now — they are out of the running path but still unit-tested; removing them is code-cleanup, not
+  compose-cleanup, and would be a separate, larger change.
+- **Alternatives:** (a) leave the dead services — simplest, but every reviewer sees three containers
+  that do nothing and the broker's healthcheck adds ~15s + a failure mode to the gate; (b) also rip
+  out Redis and the old `stream.py`/`events.py` — more thorough, but Redis is a real readiness
+  dependency and the envelope code is still tested, so that is a deliberate, separately-scoped change.
+- **Trade-offs / notes:** the repo no longer matches CLAUDE.md §7's original `tracker/ analytics/`
+  layout — but that layout predates ADR-0005, and [[ARCHITECTURE]]'s repo-layout section already
+  describes the current `detector / api / common` shape, so this aligns the tree with the documented
+  design. Verified after the change: `docker compose config` parses, final services are the six
+  above, **ruff clean + 102 tests pass**.
+- **Rationale:** protects the acceptance gate (fewer moving parts, faster + more reliable
+  `docker compose up`) and makes the running system legible — what a reviewer sees is exactly what
+  the architecture claims, nothing vestigial.
+
+---
+
+## ADR-0017 — CPU-only PyTorch + BuildKit pip cache for fast, light detector builds
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** A fresh `docker compose up --build` was crawling: the detector's `pip install` pulled
+  the **default CUDA build of PyTorch** (a transitive dep of `ultralytics`), dragging in ~1.5–2.5 GB
+  of NVIDIA CUDA wheels we never use — we run YOLO + ByteTrack inference on **CPU**. On a throttled
+  pipe this turned the detector image into a multi-hour build and the dominant gate-setup cost. The
+  `requirements.txt` comment already *claimed* "torch, CPU" but nothing enforced it.
+- **Decision:** In the detector Dockerfile, install **CPU-only `torch`/`torchvision` from PyTorch's
+  CPU index** (`--index-url https://download.pytorch.org/whl/cpu`) *before* `ultralytics`, so
+  ultralytics reuses the already-satisfied small CPU wheel instead of the GPU build. Add a **BuildKit
+  pip cache mount** (`--mount=type=cache,target=/root/.cache/pip`, dropping `--no-cache-dir`) so
+  interrupted/repeat builds reuse downloaded wheels without bloating the final image.
+- **Alternatives:** (a) leave it — simplest, but ~10x the download and a brutal first build; (b) pin a
+  GPU torch + ship a CUDA base image — only worth it with an actual GPU, which the demo machine lacks;
+  (c) a pip `--extra-index-url` in requirements.txt — less reliable at forcing the CPU variant than an
+  explicit pre-install step.
+- **Trade-offs / notes:** the image now has **no GPU acceleration** — correct for this CPU demo, and
+  the honest scale story is that production at 40 stores swaps in a CUDA base + GPU torch (a
+  deployment-time change, see the scaling note in [[ARCHITECTURE]]). Torch/torchvision follow
+  ultralytics' supported range (not hard-pinned), matching the existing `>=` style in requirements.
+- **Rationale:** cuts the detector build from a ~2 GB CUDA pull to a ~200 MB CPU wheel — far faster and
+  lighter for the reviewer's one-command build — with zero change to runtime behaviour (already CPU).
+
+---
+
+## ADR-0018 — Incremental (per-camera) flush so the API populates progressively (Slice 2.10)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** The first real on-stack `docker compose up` run exposed a demo-killer. The auto-feed
+  (ADR-0015) only POSTs at `batch_size` (500) or on the sink's final exit, and a full pass is only
+  ~131 events — under 500 — so the **single** POST happened at the very end of the run. Detection is
+  CPU-bound and sequential (~5 min × 4 cameras ≈ 20–24 min), so the endpoints read **zero for ~24
+  minutes, then jump to full**. A reviewer on a 10-minute budget would see zeros and conclude the
+  system is broken.
+- **Decision:** Give the sink contract an explicit **`flush()`** (already on `HttpEventSink`; added to
+  `JsonlEventSink` and `FanOutSink`, and to the `EventSink` Protocol). In the detector's `run_once`,
+  call `sink.flush()` **after each camera** and log a `camera_posted` line. Now each camera's events
+  POST as soon as that camera finishes, so the endpoints climb progressively (≈4 update points) while
+  detection is still running, instead of all-at-once at the end.
+- **Alternatives:** (a) leave it — works, but the ~24-min blank window risks the gate's first
+  impression; (b) lower `batch_size` to a small number — posts mid-camera but the trailing partial
+  batch of each camera still waits for the *next* camera's events, so camera boundaries aren't
+  respected; (c) a background time-based flush thread — more moving parts (threading) than the clips
+  justify. Per-camera flush is the simplest mechanism that maps cleanly to "data appears as each
+  camera completes."
+- **Trade-offs / notes:** ~4 POSTs per run instead of 1 — negligible, and **idempotent ingest**
+  (`event_id` dedup) makes the extra requests free of risk; the JSONL still receives every event.
+  `batch_size` (500) stays as a within-camera memory cap. On a flush failure the existing non-fatal
+  contract holds (warn + drop to JSONL-only for replay). No new config — the behaviour is strictly
+  better, so there's nothing to toggle. This narrows but does **not** eliminate the timing gap (the
+  first numbers still appear after camera 1, ~5 min); the startup **seed** (set aside) remains the
+  instant-on answer if a sub-5-minute demo is needed.
+- **Rationale:** turns the live demo from "zeros for 24 minutes then a jump" into a visibly-working
+  feed that fills in as detection runs — directly protecting the reviewer's first impression, the
+  cheapest possible change, with no integrity cost (numbers still computed from real ingested events).
+
+---
+
+## ADR-0019 — Detector throughput tuning (sample_fps 10→5, imgsz 640→480) for the 10-min budget
+- **Date:** 2026-06-02 · **Status:** Accepted (pending count re-validation on the next full run)
+- **Context:** The first on-stack run took **~24 min** for the detector to process the 4 clips. Profiling
+  the logs (5868 frames ÷ ~24 min ≈ **247 ms/frame**) plus `docker info` pinned the cause: YOLO is
+  CPU-bound and Docker Desktop (WSL2) was allotted only **2 of the host's 12 logical cores**. The
+  reviewer's budget is ~10 min, so the pass must roughly halve-and-then-some. Two orthogonal levers
+  exist: **fewer frames** and **cheaper per-frame inference**.
+- **Decision:** (1) Lower `tracker_sample_fps` **10 → 5** — halves the frames ByteTrack sees. (2) Lower
+  YOLO **`imgsz` 640 → 480** (new `detector_imgsz`, plumbed `config → PersonTracker.update(imgsz=)`) —
+  ~1.6× faster per frame. Together ≈ **3–4× faster** (~24 min → ~6–8 min) even at 2 cores, before any
+  Docker-resource bump. Both are config, trivially revertible. Also documented the **Docker CPU/RAM
+  headroom** fix (`.wslconfig processors/memory`) in the README as the no-code lever (the largest win).
+- **Alternatives:** (a) leave it — fails the time budget; (b) only raise Docker cores — biggest single
+  win but it's the reviewer's machine, not something we can guarantee in the repo, so we also tune what
+  we *do* control; (c) OpenVINO/ONNX export — 2–3× and result-preserving, but adds a build/export step
+  and runtime dep (deferred — revisit if 5 fps / 480 px proves too lossy); (d) parallelise the 4
+  cameras — the Re-ID gallery is shared (cross-camera dedup), so it needs a per-camera-then-merge
+  refactor; not worth it versus the cheap knobs.
+- **Trade-offs / notes:** lower fps + smaller imgsz **can** change detections, so the validated
+  ground-truth result (**2 customers**, funnel 2→2→0→0) **must be re-checked on the next full run**;
+  if `unique_visitors` drifts off 2 we step back toward 7 fps / 560 px or revert. `track_buffer=150`
+  is frames-based, so at 5 fps it now bridges ~30 s (was ~15 s) — *more* occlusion tolerance, which
+  helps the customer count hold. The **startup seed** (set aside) remains the only *guaranteed*
+  instant-on answer; this tuning makes the live pass fast, not instant.
+- **Rationale:** the cheapest, in-repo way to bring live detection inside the reviewer's window without
+  a GPU or a guaranteed beefy host — paired with a README note so a reviewer can also give Docker more
+  cores. Accuracy impact is bounded and explicitly re-validated, keeping the integrity story honest.

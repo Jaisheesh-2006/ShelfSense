@@ -23,11 +23,12 @@ from shelfsense_common.contracts import BehaviorEvent
 
 
 class EventSink(Protocol):
-    """The minimal sink contract: a context manager that accepts `write(event)`."""
+    """The minimal sink contract: a context manager that accepts `write(event)` and `flush()`."""
 
     def __enter__(self) -> EventSink: ...
     def __exit__(self, *exc: object) -> None: ...
     def write(self, event: BehaviorEvent) -> None: ...
+    def flush(self) -> None: ...
 
 
 class JsonlEventSink:
@@ -64,6 +65,13 @@ class JsonlEventSink:
         # model_dump_json serialises the tz-aware datetime as ISO-8601 and the enum as its value.
         self._fh.write(event.model_dump_json() + "\n")
         self._fh.flush()  # durability: each event is on disk before we process the next frame
+
+    def flush(self) -> None:
+        """Flush the file buffer. Each write already flushes for durability, so this is effectively
+        a no-op; it exists so the sink satisfies the EventSink contract and `FanOutSink.flush()` can
+        fan to every child uniformly (the per-camera incremental flush, ADR-0018)."""
+        if self._fh is not None:
+            self._fh.flush()
 
 
 # Transport = "POST these JSON bytes to this URL"; injectable so the sink is testable offline.
@@ -147,6 +155,9 @@ class HttpEventSink:
             self.flush()
 
     def flush(self) -> None:
+        """POST whatever is buffered now (no-op if empty). Safe to call repeatedly mid-run — the
+        detector calls it after each camera so the API populates progressively (ADR-0018), and it
+        also runs on exit for the final partial batch."""
         if not self._buffer:
             return
         batch, self._buffer = self._buffer, []
@@ -210,3 +221,10 @@ class FanOutSink:
     def write(self, event: BehaviorEvent) -> None:
         for sink in self._sinks:
             sink.write(event)
+
+    def flush(self) -> None:
+        """Flush every child sink. Lets the caller push buffered events through mid-run (e.g. the
+        detector's per-camera incremental flush) so the API populates progressively rather than only
+        at the final exit (ADR-0018)."""
+        for sink in self._sinks:
+            sink.flush()
