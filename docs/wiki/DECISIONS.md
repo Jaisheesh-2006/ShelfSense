@@ -438,7 +438,8 @@ What changes vs. our earlier design:
   drop the now-unused `STREAM_BOOTSTRAP_SERVERS` from the shared compose env. Final stack = **`api`,
   `detector`, `postgres`, `redis`, `prometheus`, `grafana`** — every service is load-bearing.
 - **Kept deliberately:** **`redis`** (the `/readyz` readiness dependency + documented hot-state cache
-  for the scale story); **`postgres`** (durable event/metrics store); **Prometheus + Grafana**
+  for the scale story) — ⚠️ **later removed in ADR-0023** (it never gained a real caching job, so it was
+  pure gate weight); **`postgres`** (durable event/metrics store); **Prometheus + Grafana**
   (observability, graded). The old `stream.py` Kafka producer and `contracts/events.py` envelope stay
   for now — they are out of the running path but still unit-tested; removing them is code-cleanup, not
   compose-cleanup, and would be a separate, larger change.
@@ -612,10 +613,48 @@ What changes vs. our earlier design:
   **mesa/LLVM OpenGL stack** (libz3, libdrm, libelf, …) and was the dominant download. We use
   **`opencv-python-headless`**, which is built *without* OpenGL — `libgl1` was cargo-culted from the
   non-headless install instructions.
-- **Decision:** Install only **`libglib2.0-0`** (for `libgthread`, which cv2 does need); drop `libgl1`.
-- **Validated:** a standalone image with *only* `libglib2.0-0` imported **cv2 4.13.0** and ran a
-  `cvtColor` successfully (`CV2_IMPORT_OK`). (A first attempt died on a transient pip **hash mismatch**
-  = a corrupted download — a network-reliability symptom, not a libgl1 issue; an identical retry passed,
-  confirming the corruption is intermittent and points at the WSL2 MTU path.)
-- **Rationale:** a smaller, faster detector build with **no runtime impact**. One-line revert (re-add
-  `libgl1`) if a future OpenCV build ever dlopen's GL.
+- **Decision:** Install only **`libglib2.0-0`** (for `libgthread`); drop `libgl1`. **Catch found on the
+  real build:** `ultralytics` depends on the FULL `opencv-python` (needs libGL **and** X11/`libxcb`),
+  which pip pulls alongside the headless build — so dropping `libgl1` broke `import cv2`
+  (`ImportError: libxcb.so.1`). **Fix:** after `pip install -r requirements.txt`, **replace opencv with
+  the headless build** (`pip uninstall -y opencv-python opencv-python-headless && pip install
+  opencv-python-headless`) so the only `cv2` present needs no GL/X libs.
+- **Validated:** a standalone build that **reproduces the conflict** (both opencv builds installed),
+  applies the replace, then imports `cv2` with *only* `libglib2.0-0` → **`CV2_HEADLESS_OK` (cv2 4.13.0)**.
+  (An earlier check tested headless *alone* and falsely passed — it didn't model ultralytics pulling the
+  full build; corrected here.) The pip **hash mismatch** seen mid-way was a transient WSL2-MTU corruption,
+  fixed via `networkingMode=mirrored`.
+- **Rationale:** a smaller, GL/X-free detector image that actually imports `cv2`. If a future build ever
+  needs GL, the revert is to re-add `libgl1` to the apt line (it transitively restores libxcb).
+
+---
+
+## ADR-0023 — Remove Redis entirely (it was vestigial)
+- **Date:** 2026-06-02 · **Status:** Accepted (user directive)
+- **Context:** Redis entered the design in the original four-service plan (ADR-0001) as "hot state /
+  cache." Through the re-alignment to the ingest-centric architecture (ADR-0005) and compose cleanup
+  (ADR-0016, which **deliberately kept** Redis as a real `/readyz` dependency), it was never actually
+  given a caching job — metrics/funnel/heatmap are all computed live per request (cheap at ~150
+  events), so nothing read or wrote Redis. The only code touching it was the readiness probe pinging
+  it, which [[STATE]] had flagged as an open "give it a real job or remove it" decision. A dependency
+  whose sole purpose is to be health-checked is pure cost on the acceptance-gate path (an extra image
+  to pull, an extra container to start, an extra failure mode) with zero benefit.
+- **Decision:** **Remove Redis completely.** Deleted: the `redis` service + its env in
+  `docker-compose.yml` and the api's `depends_on: redis`; the `redis>=5.0` dependency in
+  `services/api/requirements.txt`; `services/api/shelfsense_api/redis_client.py`; the `redis_host` /
+  `redis_port` settings and the `redis_url` property in `config.py`; the `REDIS_*` block in
+  `.env.example`. `GET /readyz` now checks **Postgres only** (`{"postgres": ...}`).
+- **Alternatives:** (a) give Redis a real read-through cache for the polling-dashboard endpoints —
+  defensible (it fits the 4 s poll), but it adds caching/invalidation complexity and a stale-data
+  surface for a metric set that's already cheap to recompute, and the rubric rewards a lean, legible
+  runnable system over speculative scaling infra; (b) keep it as a `/readyz` dependency — the status
+  quo we rejected, since a checked-but-unused service misleads a time-boxed reviewer about what runs.
+- **Trade-offs / notes:** if a real caching need appears later (e.g. the 40-store scale story), Redis
+  is a clean, well-understood re-add — and the scale narrative in [[ARCHITECTURE]] already covers
+  caching/queueing as a deliberate future step, so removing it now costs nothing there. Final stack is
+  now **five backend services** (api, detector, postgres, prometheus, grafana) **+ frontend**.
+- **Validated:** ruff clean; full pytest suite green; `docker compose config` parses with Redis gone
+  and `/readyz` Postgres-only.
+- **Rationale:** fewer moving parts on the one-command gate path, a system where every running service
+  is load-bearing (what the reviewer sees == what the architecture claims), and the long-standing
+  "Redis's fate" open item closed honestly rather than by inventing a use for it.

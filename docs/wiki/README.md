@@ -32,7 +32,7 @@ metrics — headline metric: **store conversion rate**. It's the UpGrad/Purplle 
 Intelligence Challenge (April 2026). Evaluated as an **end-to-end systems problem**, not an
 ML accuracy problem. Store: **Purplle "Brigade_Bangalore" (ST1008)**, data from **10-Apr-2026**.
 
-Pipeline: `CCTV → detector (YOLO) → tracker (MOT) → analytics (sessions, funnel, anomalies) → api (FastAPI) → frontend`, glued by structured events, with Postgres + Redis, Dockerized, observable. See [[ARCHITECTURE]].
+Pipeline: `CCTV → detector (YOLO + ByteTrack + Re-ID) → behavioural events → api (FastAPI, ingest + metrics) → frontend`, glued by the structured event schema, with Postgres, Dockerized, observable. See [[ARCHITECTURE]].
 
 ---
 
@@ -75,5 +75,8 @@ Pipeline: `CCTV → detector (YOLO) → tracker (MOT) → analytics (sessions, f
 
 ## Current state (snapshot — full detail in [[STATE]])
 
-🟡 **Phase 0 — Scaffolding + wiki grounding.** Structure created; wiki rewritten against the
-real raw inputs and evaluation rubric. **No application code yet.** Next action lives in [[STATE]].
+🟢 **Phases 1 & 2 complete; Phase 3 (production polish) in progress.** The full stack builds and
+runs from one `docker compose up --build` — **six services** (api, detector, postgres, prometheus,
+grafana, frontend). The detector processes the customer cameras and auto-feeds the API, and every
+prescribed endpoint returns real, internally-consistent data (unique visitors 2, funnel 2→2→0→0,
+POS 24/₹44,920). The clean-machine acceptance-gate dry-run has passed. Next action lives in [[STATE]].

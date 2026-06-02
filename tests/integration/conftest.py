@@ -1,6 +1,6 @@
 """Integration-test fixtures: a TestClient backed by a throwaway SQLite database.
 
-Hermetic — no Postgres/Redis/POS file required. We rebind the API's engine to a per-test SQLite file
+Hermetic — no Postgres/POS file required. We rebind the API's engine to a per-test SQLite file
 (`configure_engine`) and point POS at an empty directory so the startup load is a graceful no-op.
 """
 

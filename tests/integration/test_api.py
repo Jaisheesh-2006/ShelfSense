@@ -3,7 +3,7 @@
 #   against a real SQLite-backed app via FastAPI TestClient.
 # Context: ingest is idempotent by event_id and partial-success on bad events; metrics/funnel are
 #   computed live (session-based, staff-excluded). The old /api/v1/* endpoints are retired.
-# Constraints: hermetic (SQLite tmp DB, no Postgres/Redis/POS); deterministic; assert the response
+# Constraints: hermetic (SQLite tmp DB, no Postgres/POS); deterministic; assert the response
 #   contracts (counts, error envelope) and the no-double-count guarantee on re-POST.
 # Output: pytest tests using the `client` fixture (tests/integration/conftest.py).
 

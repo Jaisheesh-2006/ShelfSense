@@ -10,7 +10,6 @@ from shelfsense_common.analytics import feed_status
 from shelfsense_common.config import get_settings
 
 from shelfsense_api.db import get_session, ping_db
-from shelfsense_api.redis_client import ping_redis
 from shelfsense_api.repository import latest_event_ms_by_store
 
 router = APIRouter(tags=["health"])
@@ -25,7 +24,7 @@ def healthz() -> dict[str, str]:
 @router.get("/readyz")
 def readyz(response: Response) -> dict[str, object]:
     """Readiness: dependencies reachable. 503 if not, so orchestrators hold traffic."""
-    deps = {"postgres": ping_db(), "redis": ping_redis()}
+    deps = {"postgres": ping_db()}
     ready = all(deps.values())
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

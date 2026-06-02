@@ -40,10 +40,6 @@ class Settings(BaseSettings):
     postgres_user: str = "shelfsense"
     postgres_password: str = "shelfsense"
 
-    # --- Redis ---
-    redis_host: str = "redis"
-    redis_port: int = 6379
-
     # --- Detector ---
     yolo_model: str = "yolov8n.pt"
     detection_confidence: float = 0.35  # validated on CAM3 corridor traffic (Slice 2.2)
@@ -145,10 +141,6 @@ class Settings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
-
-    @property
-    def redis_url(self) -> str:
-        return f"redis://{self.redis_host}:{self.redis_port}/0"
 
     @property
     def clip_start_dt(self) -> datetime:

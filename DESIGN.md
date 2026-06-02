@@ -72,7 +72,12 @@ input and never include non-customers — which is exactly what the integrity ch
 
 ## 6. Production readiness
 - **One-command start:** `docker compose up`, no manual steps; the YOLO model is baked into the image
-  so there is no runtime download.
+  so there is no runtime download. The full stack — six backend services **plus a `frontend` dashboard
+  container** (nginx, `:8080`) — comes up from this single command.
+- **Live dashboard (Part E):** a React SPA polls the store endpoints every few seconds and shows the
+  conversion ring, funnel, zone heatmap, anomalies, and feed-health **updating live as the detector
+  feeds events** — with a "detection running" banner and a `data_confidence` badge so a mid-run state
+  reads as *working*, not broken. Nothing is hardcoded; every value is fetched from the real endpoints.
 - **Idempotent ingest:** `event_id` is the dedup key — re-POSTing a batch is safe (replay-friendly);
   validated on the real 135-event file (2nd POST = 0 accepted, 135 duplicate).
 - **Partial-success ingest:** a malformed event is reported in `errors[]` rather than rejecting the whole

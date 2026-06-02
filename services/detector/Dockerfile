@@ -27,6 +27,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY services/detector/requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
+# ultralytics depends on the FULL opencv-python (needs libGL + X11/libxcb). Replace it with the
+# headless build so cv2 imports with only libglib2.0-0 — keeps the image GL/X-free and slim.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip uninstall -y opencv-python opencv-python-headless \
+    && pip install opencv-python-headless
+
 # Pre-bake the YOLO weights into the image so there's no model download at runtime
 # (keeps `docker compose up` working offline / reliably — acceptance-gate friendly).
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"

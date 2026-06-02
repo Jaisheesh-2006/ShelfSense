@@ -8,20 +8,41 @@
 
 ## Current phase
 
-🟢 **Gate dry-run PASSED on the real stack; the auto-feed now populates the API progressively.**
-Phase 1 + Slices 2.0–2.10 done. `docker compose up --build` from clean brings up the six load-bearing
-services (api, detector, postgres, redis, prometheus, grafana), the detector processes all 4 cameras
-and auto-POSTs its events, and **every endpoint returns real, internally-consistent data** (unique 2,
-funnel 2→2→0→0, heatmap makeup=100, POS 24/₹44,920, anomalies 2× honest-INFO) with zero manual steps.
-Recent: 2.9 compose cleanup (ADR-0016), CPU-only torch + pip cache for fast builds (ADR-0017), 2.10
-per-camera incremental flush so the endpoints fill in *as detection runs* (ADR-0018), and detector
-throughput tuning (sample_fps 10→5, imgsz 640→480, ADR-0019) to fit the ~10-min budget, a live
-**React dashboard** (ADR-0020, :8080), and **deterministic event/visitor ids** so re-runs and
-restarts are idempotent — no more DB accumulation (ADR-0021). **Re-validate `unique_visitors`=2 on a
-clean `docker compose down -v` + `up` run.** Remaining:
-**Phase 3 polish** (coverage push, structured-logging fields, optional React dashboard) — plus the
-optional startup **seed** (set aside) for an instant-on demo, and an open call on **Redis's role**
-(today only the `/readyz` probe touches it — either give it a real caching job or remove it).
+🟢 **Gate dry-run PASSED on the real stack; the auto-feed populates the API progressively; the full
+stack (incl. the React dashboard) builds and runs from one command.** Phase 1 + Slices 2.0–2.10 +
+the Part-E dashboard + deterministic ids + the build/runtime hardening are all done. `docker compose
+up --build` from clean brings up **six services** — five load-bearing backend (api, detector,
+postgres, prometheus, grafana) **plus `frontend`** (nginx, :8080) — the detector processes all
+4 cameras and auto-POSTs its events, and **every endpoint returns real, internally-consistent data**
+(unique 2, funnel 2→2→0→0, heatmap makeup=100, POS 24/₹44,920, anomalies 2× honest-INFO) with zero
+manual steps.
+
+Recent work, newest first:
+- **Redis removed entirely (ADR-0023).** It was vestigial — only the `/readyz` probe pinged it, with no
+  caching job. Dropped the `redis` compose service, the `redis` Python dep, the `redis_client.py` module,
+  the `REDIS_*` config/env, and the readiness check (now Postgres-only). Resolves the long-standing
+  "decide Redis's fate" open item. Fewer moving parts on the gate path; nothing else referenced it.
+- **Detector image actually imports `cv2` (ADR-0022).** Dropping `libgl1` to slim the image broke
+  `import cv2` because `ultralytics` pulls the FULL `opencv-python` (needs libGL + X11/`libxcb`) →
+  `ImportError: libxcb.so.1` at the YOLO pre-bake. Fixed by **replacing opencv with the headless
+  build** after `pip install -r requirements.txt`. Validated by reproducing the conflict →
+  `CV2_HEADLESS_OK` (cv2 4.13.0). Build is now slim, GL/X-free, and runnable.
+- **Deterministic event/visitor ids (ADR-0021)** so re-runs and restarts are **idempotent** — no more
+  DB accumulation (the `events_total 237 = 131+106` / inflated-unique foot-gun is gone).
+- **Live React dashboard (ADR-0020, :8080)** — flat custom design system, polls all five endpoints,
+  numbers climb live as detection runs.
+- **CPU-only torch + pip cache (ADR-0017)** + **detector throughput tuning** (sample_fps 10→5,
+  imgsz 640→480, ADR-0019) for a fast build and a ~10-min-budget run.
+- **2.10 per-camera incremental flush (ADR-0018)** so endpoints fill in *as detection runs*;
+  **2.9 compose cleanup (ADR-0016)**.
+
+**⚠ The one pending check:** re-validate `unique_visitors`=2 / funnel 2→2→0→0 on a clean
+`docker compose down -v` + `up --build` run — the fps5/imgsz480 tuning hasn't been confirmed against
+the accuracy target on a from-scratch run yet (if it drifts, step back toward 7 fps / 560 px).
+
+Remaining beyond that: **Phase 3 polish** (coverage push to >70%, structured-logging field pass) — plus
+the optional startup **seed** (set aside) for an instant-on demo. (**Redis's fate is now decided —
+removed, ADR-0023.**)
 
 ### Dashboard (done) — live React UI + ShelfSense design system (ADR-0020)
 - **`frontend/`** Vite + React + TS SPA polling all five store endpoints every 4 s: conversion ring,
@@ -51,9 +72,9 @@ optional startup **seed** (set aside) for an instant-on demo, and an open call o
   (legacy: broker dropped in ADR-0005; tracker/analytics were Phase-1 heartbeat stubs whose work now
   lives in `detector` + `api`). Deleted the orphaned `services/tracker/` and `services/analytics/`
   dirs; dropped the unused `STREAM_BOOTSTRAP_SERVERS` compose env.
-- **Final stack = `api`, `detector`, `postgres`, `redis`, `prometheus`, `grafana`** — all load-bearing.
-  Kept Redis (`/readyz` dependency) and the old `stream.py`/`events.py` envelope (out of the run path
-  but still unit-tested; removing them is separate code-cleanup).
+- **Final stack (at the time) = `api`, `detector`, `postgres`, `redis`, `prometheus`, `grafana`** — all
+  load-bearing. Kept Redis (`/readyz` dependency) and the old `stream.py`/`events.py` envelope (out of the
+  run path but still unit-tested; removing them is separate code-cleanup). **(Redis later removed — ADR-0023.)**
 - **Validated:** `docker compose config` parses; final service list is the six above; **ruff clean +
   102 tests pass**. The clean-machine `docker compose up --build` dry-run is the user's next step.
 
@@ -278,26 +299,28 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   - **VALIDATED:** `docker compose up --build` → all 9 containers up, api healthy, `/metrics` 200,
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
-## ▶ Next action — Phase 3 (production hardening, AI docs, dashboard)
-Every prescribed endpoint exists, the stack feeds itself (2.8), compose is clean (2.9), and the
-**clean-machine gate dry-run PASSED end-to-end** on `docker compose up --build` (2.10 made it populate
-progressively). Phase 3 is **polish + packaging** ([[TASKS]] Phase 3):
-1. **Decide Redis's fate** — currently vestigial (only the `/readyz` probe touches it). Either give it
-   a real job (read-through cache for metrics/funnel/heatmap — fits the polling dashboard) or remove it.
+## ▶ Next action
+Every prescribed endpoint exists, the stack feeds itself (2.8), compose is clean (2.9), the full stack
+incl. the dashboard builds + runs from one command, ids are deterministic, and the **clean-machine gate
+dry-run PASSED end-to-end** on `docker compose up --build` (2.10 made it populate progressively).
+
+**0. (DO FIRST) Confirm the accuracy re-validation** — clean `docker compose down -v && up --build`,
+   then check `/stores/ST1008/metrics` shows `unique_visitors: 2` and funnel 2→2→0→0 under the tuned
+   fps5/imgsz480. This is the only open item gating "perf tuning done". If it drifts, raise fps/imgsz.
+
+Then Phase 3 **polish + packaging** ([[TASKS]] Phase 3):
+1. ✅ **Redis's fate decided — removed** (ADR-0023). It was vestigial (only `/readyz` pinged it); rather
+   than invent a caching job we dropped it to keep the gate path lean. `/readyz` is now Postgres-only.
 2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per
    request; confirm graceful degradation (DB down → 503, no stack trace).
 3. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
 4. ✅ **Live dashboard (Part E)** — done (ADR-0020); `frontend` on :8080 polling live.
 5. **(Optional) startup seed** — instant-on numbers for a sub-5-min demo (set aside).
-2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per request;
-   confirm graceful degradation (DB down → 503, no stack trace).
-3. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
-4. **Live dashboard (Part E, bonus)** — a small **React** screen with ≥1 metric updating as events flow.
-5. Keep `DESIGN.md`/`CHOICES.md` in sync (ongoing).
+6. Keep `DESIGN.md`/`CHOICES.md` + [[INTERVIEW_QA]] in sync (ongoing).
 
 ## Notes / env
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.
-- Run the stack: `docker compose up --build` (api :8000, prometheus :9090, grafana :3000). Postgres/Redis internal-only.
+- Run the stack: `docker compose up --build` (api :8000, prometheus :9090, grafana :3000). Postgres internal-only.
 - **Detector build (ADR-0017):** CPU-only torch (PyTorch CPU index) + BuildKit pip cache — the detector
   image pulls a ~200 MB CPU wheel, not the ~2 GB CUDA build. After the first successful build, use
   `docker compose up` (no `--build`) to skip the re-install entirely.

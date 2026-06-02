@@ -86,7 +86,7 @@ Event-driven, service-separated pipeline:
 CCTV (5 cams) → detector (YOLO) → tracker (MOT + zone map) → analytics (sessions, funnel,
 conversion via POS CSV join, anomalies) → api (FastAPI) → frontend (React)
             └──────────── structured events (Kafka-compatible) ────────────┘
-            storage: PostgreSQL (metrics) + Redis (hot state) · observability: Prometheus + Grafana
+            storage: PostgreSQL (events + metrics) · observability: Prometheus + Grafana
 ```
 
 Each service has one clear responsibility and communicates via versioned events
@@ -100,7 +100,7 @@ footfall with POS transactions (mind the video/CSV window mismatch — `BUSINESS
 - **Backend:** Python 3.11+, FastAPI, Pydantic v2.
 - **Computer vision:** YOLO (Ultralytics), a modern tracker (ByteTrack/OC-SORT/DeepSORT — PD-2), OpenCV.
 - **Messaging:** Kafka-compatible event streaming (concrete choice PD-1).
-- **Storage:** PostgreSQL. **Cache/hot state:** Redis.
+- **Storage:** PostgreSQL.
 - **Frontend:** React.
 - **Containerization:** Docker + Docker Compose (one-command up).
 - **Testing:** Pytest. **Monitoring:** Prometheus + Grafana. **Logging:** structured (JSON).

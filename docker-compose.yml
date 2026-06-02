@@ -2,7 +2,7 @@
 #   docker compose up --build
 #
 # Exposes to the host: api:8000, prometheus:9090, grafana:3000.
-# Postgres/Redis are internal-only (not published) to avoid clashing with local services.
+# Postgres is internal-only (not published) to avoid clashing with local services.
 
 # Shared environment for the Python services. Sensible defaults so the stack runs with no .env.
 x-app-env: &app-env
@@ -13,8 +13,6 @@ x-app-env: &app-env
   POSTGRES_DB: shelfsense
   POSTGRES_USER: shelfsense
   POSTGRES_PASSWORD: shelfsense
-  REDIS_HOST: redis
-  REDIS_PORT: "6379"
 
 services:
   # ---- Infrastructure ----
@@ -34,15 +32,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-    restart: unless-stopped
-
   # ---- Application services ----
   api:
     build:
@@ -56,8 +45,6 @@ services:
       - "./docs/raw:/data/pos:ro"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     # Explicit healthcheck (mirrors the api Dockerfile) so the detector's `service_healthy` dependency
     # is legible from compose alone — hits /healthz via stdlib urllib (the slim image has no curl).

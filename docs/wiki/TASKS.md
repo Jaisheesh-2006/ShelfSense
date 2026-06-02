@@ -85,7 +85,7 @@
   **tracker**/**analytics** Phase-1 scaffolds from `docker-compose.yml`; deleted their `services/` dirs;
   removed the unused `STREAM_BOOTSTRAP_SERVERS` env. **Final stack = api, detector, postgres, redis,
   prometheus, grafana** (all load-bearing; Redis kept for `/readyz`). **Validated:** `docker compose
-  config` parses, six services, ruff clean + 102 tests pass.
+  config` parses, six services, ruff clean + 102 tests pass. **(Redis later removed — ADR-0023.)**
 - ✅ **Slice 2.10 — per-camera incremental flush (ADR-0018).** First real on-stack `docker compose up`
   run surfaced a demo-killer: the auto-feed POSTed only at the final exit, so endpoints read zero for
   the whole ~24-min CPU detection pass, then jumped. Added `flush()` to the `EventSink` Protocol +
@@ -103,6 +103,11 @@
   `event_id` = UUIDv5 of `(store,camera,visitor,type,zone,timestamp)`, filled when blank, preserved on
   ingest. Re-runs/restarts at the same config now **dedup** instead of accumulating (fixed the
   `events_total 237 = 131+106` inflation). ruff clean; **110 tests** (+5 `test_event_ids`).
+- ✅ **Detector image imports `cv2` (ADR-0022)** — slimming the image by dropping `libgl1` broke
+  `import cv2` because `ultralytics` pulls the FULL `opencv-python` (needs libGL + X11/`libxcb`) →
+  `ImportError: libxcb.so.1` at the YOLO pre-bake. Fixed by **replacing opencv with the headless build**
+  after `pip install -r requirements.txt`; apt installs only `libglib2.0-0`. Validated by reproducing the
+  conflict in a standalone build → `CV2_HEADLESS_OK` (cv2 4.13.0). Slim, GL/X-free, runnable.
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);

@@ -12,7 +12,7 @@
 | R-5 | Occlusion / crowding / group entry break tracking → ID switches | Bad footfall & sessions (Detection 30) | High | Robust tracker (PD-2); tune association; handle group entry; document limits in [[EDGE_CASES]]. |
 | R-6 | Staff counted as customers (salespersons present all day) | Inflated footfall, wrong conversion | Med | Exclude staff where detectable (dwell/position heuristics); document. |
 | R-7 | Funnel double-counts (per-detection not per-session) | Loses the 35-mark bucket | Med | Session-based funnel, each session once per stage ([[BUSINESS_RULES]]). |
-| R-8 | Streaming backbone setup friction for reviewers | Gate risk (R-1) | Med | One-command compose; consider in-proc/Redis-stream shim (PD-1). |
+| R-8 | Streaming backbone setup friction for reviewers | Gate risk (R-1) | Med | **Resolved (ADR-0005):** no broker — the detector POSTs events to `/events/ingest` (idempotent); one-command compose. |
 | R-9 | ffprobe/ffmpeg unavailable locally → unknown video specs | Slows zone/entry work | Low | Use OpenCV inside detector container; record specs in [[GROUND_TRUTH]]. |
 | R-10 | No floor plan in `raw/` | Homography zone mapping harder | Med | Define zones manually per camera frame (PD-4). |
 | R-11 | Over-engineering vs. timeframe | Incomplete end-to-end system | Med | Ship thin vertical slice first (CLAUDE.md Principle 1), then deepen ([[TASKS]]). |

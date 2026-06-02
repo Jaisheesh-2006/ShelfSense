@@ -114,14 +114,15 @@ The full design lives in the **wiki** — start at [docs/wiki/README.md](docs/wi
 
 🟢 **Phases 1 & 2 complete** — `docker compose up` runs the full stack with one command; the
 detector counts people from the real clips and **auto-feeds** the API, which serves health, metrics,
-funnel, heatmap, and anomaly endpoints (computed from real data, never hardcoded).
+funnel, heatmap, and anomaly endpoints (computed from real data, never hardcoded). The **live React
+dashboard** (Part E) is up at http://localhost:8080.
 
-🟡 **Phase 3 in progress** — production hardening + a live dashboard.
+🟡 **Phase 3 in progress** — production hardening (structured-logging fields, coverage push).
 See [docs/wiki/TASKS.md](docs/wiki/TASKS.md).
 
 ---
 
 ## Tech stack
 
-Python · FastAPI · YOLO + ByteTrack · PostgreSQL · Redis · React · Docker Compose ·
+Python · FastAPI · YOLO + ByteTrack · PostgreSQL · React · Docker Compose ·
 Prometheus + Grafana.

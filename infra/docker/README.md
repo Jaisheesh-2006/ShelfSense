@@ -2,9 +2,10 @@
 
 Containerization for ShelfSense.
 
-- Per-service Dockerfiles (detector, tracker, analytics, api, frontend).
-- `docker-compose.yml` orchestrating the full stack: services + event stream
-  (Kafka-compatible) + PostgreSQL + Redis + Prometheus + Grafana.
+- Per-service Dockerfiles (detector, api, frontend).
+- Root `docker-compose.yml` orchestrates the full stack: **api, detector, postgres, prometheus,
+  grafana, frontend** — every service load-bearing (no message broker; the detector POSTs events
+  straight to the API, see ARCHITECTURE).
 - Goal: **one-command up** for reviewers — `docker compose up`.
 
-> Scaffold only. See [../../docs/wiki/ARCHITECTURE.md](../../docs/wiki/ARCHITECTURE.md) and [../../docs/wiki/TASKS.md](../../docs/wiki/TASKS.md).
+> See [../../docs/wiki/ARCHITECTURE.md](../../docs/wiki/ARCHITECTURE.md) and [../../docs/wiki/TASKS.md](../../docs/wiki/TASKS.md).
