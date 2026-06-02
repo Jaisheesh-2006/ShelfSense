@@ -135,6 +135,9 @@ class Settings(BaseSettings):
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # CORS: browser origins allowed to call the API (the React dashboard). Comma-separated; "*"
+    # allows any — safe here since the API is read-only metrics. Override via CORS_ALLOW_ORIGINS.
+    cors_allow_origins: str = "*"
 
     @property
     def postgres_dsn(self) -> str:

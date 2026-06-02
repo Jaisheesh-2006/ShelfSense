@@ -107,7 +107,11 @@
   **prompt blocks** atop test files (`# PROMPT:` / `# CHANGES MADE:`).
 - 🔄 **Part D (now LIVE, maintained each slice):** `DESIGN.md` + `CHOICES.md` at repo root (>250 words
   each) created; `# PROMPT`/`# CHANGES MADE` blocks added to all test files. Keep in sync as design moves.
-- ⬜ **Part E (bonus):** live dashboard — ≥1 metric updating as the pipeline POSTs events (web > terminal).
+- ✅ **Part E (bonus) — live React dashboard (ADR-0020).** `frontend/` Vite + React + TS SPA polling all
+  five store endpoints every 4 s (conversion ring, funnel, heatmap, anomalies, feed-health); numbers
+  climb live as detection runs. Custom **flat token-based design system** (no UI lib, no gradients,
+  white-forward, blue + teal accents). nginx-served `frontend` service on **:8080**; API got CORS.
+  **Validated:** `tsc` clean, `vite build` ok (151 kB JS / 7 kB CSS), ruff + 105 tests green.
 - ⬜ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
 
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

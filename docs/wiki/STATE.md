@@ -21,6 +21,16 @@ throughput tuning (sample_fps 10→5, imgsz 640→480, ADR-0019 + README `.wslco
 optional startup **seed** (set aside) for an instant-on demo, and an open call on **Redis's role**
 (today only the `/readyz` probe touches it — either give it a real caching job or remove it).
 
+### Dashboard (done) — live React UI + ShelfSense design system (ADR-0020)
+- **`frontend/`** Vite + React + TS SPA polling all five store endpoints every 4 s: conversion ring,
+  funnel, zone heatmap, anomalies, feed-health — live numbers climb as detection runs. **Custom flat
+  design system** (CSS tokens, no UI lib, **no gradients**, white-forward, one blue + one teal accent,
+  tabular numbers). Served by **nginx** (multi-stage Docker build) as the `frontend` service on
+  **:8080**; the API gained **CORS** (`CORS_ALLOW_ORIGINS`). Honest states: `data_confidence` badge +
+  a "detection running" banner so a mid-run reviewer reads it as working, not broken.
+- **Validated:** `tsc --noEmit` clean, `vite build` ok (151 kB JS / 7 kB CSS, 49 kB gz); ruff + 105
+  tests green; compose parses — the stack is now **seven** services (added `frontend`).
+
 ### Slice 2.10 (done) — per-camera incremental flush (ADR-0018)
 - **Problem the real run exposed:** the auto-feed POSTed only at `batch_size` (500) or final exit, and
   a full pass is ~131 events, so the *single* POST landed at the end of a ~24-min CPU run — endpoints
@@ -275,7 +285,7 @@ progressively). Phase 3 is **polish + packaging** ([[TASKS]] Phase 3):
 2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per
    request; confirm graceful degradation (DB down → 503, no stack trace).
 3. **Coverage to >70%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel).
-4. **Live dashboard (Part E, bonus)** — a small React screen with ≥1 metric updating as events flow.
+4. ✅ **Live dashboard (Part E)** — done (ADR-0020); `frontend` on :8080 polling live.
 5. **(Optional) startup seed** — instant-on numbers for a sub-5-min demo (set aside).
 2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per request;
    confirm graceful degradation (DB down → 503, no stack trace).

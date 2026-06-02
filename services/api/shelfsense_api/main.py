@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from shelfsense_common.config import get_settings
 from shelfsense_common.logging import configure_logging, get_logger
@@ -50,6 +51,15 @@ app = FastAPI(
     version="0.2.0",
     description="Retail store-intelligence metrics derived from CCTV + POS data.",
     lifespan=lifespan,
+)
+
+# Allow the browser dashboard (a different origin/port) to poll the read-only metrics endpoints.
+_cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 

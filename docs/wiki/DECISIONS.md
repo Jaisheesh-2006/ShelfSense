@@ -541,3 +541,35 @@ What changes vs. our earlier design:
 - **Rationale:** the cheapest, in-repo way to bring live detection inside the reviewer's window without
   a GPU or a guaranteed beefy host — paired with a README note so a reviewer can also give Docker more
   cores. Accuracy impact is bounded and explicitly re-validated, keeping the integrity story honest.
+
+---
+
+## ADR-0020 — Live React dashboard + a custom flat design system (Part E)
+- **Date:** 2026-06-02 · **Status:** Accepted
+- **Context:** Part E (bonus) wants a live dashboard with ≥1 metric updating as events flow. With the
+  auto-feed + incremental flush (ADR-0015/0018), the API's numbers now climb during a run, so a polling
+  dashboard makes the whole pipeline *visible* to a time-boxed reviewer — the single highest-impact
+  "standout" item. The user asked for a clean look: **simple colours, including white, no gradients.**
+- **Decision:** Build a **Vite + React + TypeScript** SPA in `frontend/` that polls all five store
+  endpoints every 4 s and renders conversion (a solid SVG ring), the funnel, the zone heatmap,
+  anomalies, and feed health. Use a **custom, token-based flat design system** ("ShelfSense UI") in
+  plain CSS variables — **no UI library**: white-forward surfaces, one calm blue accent + one teal
+  secondary, soft semantic tints, system fonts, tabular numbers, single-level shadows, **zero
+  gradients**. Serve it via a **multi-stage Docker build (node → nginx)** as a `frontend` service on
+  `:8080`. The API gains **CORS** (`CORS_ALLOW_ORIGINS`, default `*`) so the browser can poll it.
+- **Alternatives:** (a) a component library (MUI/AntD/Chakra) — faster to assemble but a much larger
+  `npm install` (painful on this network), and each imposes its own look that fights the "simple, no
+  gradient" brief; (b) an nginx reverse-proxy to the API (no CORS) — cleaner single-origin, but more
+  nginx config than enabling CORS on a read-only metrics API; (c) a terminal/Grafana-only view — the
+  rubric explicitly prefers web. (d) Recharts/D3 for charts — unnecessary; the funnel/heatmap are
+  simple CSS bars, keeping the bundle ~49 kB gzipped.
+- **Trade-offs / notes:** no design-system dependency means we hand-rolled the components, but it's a
+  small, legible surface and guarantees the exact palette constraints. The dashboard is **honest about
+  data limits** — it shows the `data_confidence` badge, INFO anomalies, and a "detection is running"
+  banner while visitor metrics are still zero, so a mid-run reviewer reads it as *working*, not broken.
+  Resolved API base at runtime (`window.location.hostname:8000`) so it works on `localhost` or a LAN IP
+  without a rebuild. **Validated:** `tsc --noEmit` clean, `vite build` succeeds (151 kB JS / 7 kB CSS),
+  compose parses with the new `frontend` service.
+- **Rationale:** turns "the endpoints exist and update" into a polished, self-evident demo a reviewer
+  grasps in seconds — maximising the Part E bonus and the overall first impression — while honouring
+  the requested calm, gradient-free, white aesthetic and keeping the bundle and build tiny.

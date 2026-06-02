@@ -37,6 +37,7 @@ That starts everything. Once it's up:
 
 | What | URL |
 |------|-----|
+| **Live dashboard** | **http://localhost:8080** |
 | API (with interactive docs) | http://localhost:8000/docs |
 | Metrics (Prometheus format) | http://localhost:8000/metrics |
 | Prometheus | http://localhost:9090 |
@@ -58,6 +59,9 @@ The detector runs YOLO on **CPU**, so give Docker some headroom or the first run
 - The **first `--build` is heavy** (YOLO/Torch downloaded once, then cached); later runs are quick.
 - **No manual steps** — the stack feeds itself. The numbers **appear progressively** as each camera
   is processed (a few minutes on CPU); `/stores/ST1008/metrics` fills in while detection runs.
+- **Inspect the raw events:** the detector also writes every event to **`data/events/behavior.jsonl`**
+  on the host (newline-delimited JSON), **growing incrementally** as each camera finishes — open it to
+  see exactly what the pipeline emitted.
 
 ---
 
