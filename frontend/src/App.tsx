@@ -1,5 +1,7 @@
-import { API_BASE, fetchDashboard, STORE_ID } from "./api/client";
-import type { Dashboard } from "./api/types";
+import { useCallback, useEffect, useState } from "react";
+
+import { API_BASE, DEFAULT_STORE_ID, fetchDashboard, fetchStores } from "./api/client";
+import type { Dashboard, StoreInfo } from "./api/types";
 import { Anomalies } from "./components/Anomalies";
 import { Badge } from "./components/Badge";
 import { Card } from "./components/Card";
@@ -30,8 +32,8 @@ function Body({ data }: { data: Dashboard }) {
     <>
       {waiting && (
         <div className="banner banner--info">
-          Detection is running — visitor metrics fill in as each camera is processed. POS sales are
-          already loaded.
+          No visitor events for this store yet — metrics populate live as the detection pipeline
+          ingests events.
         </div>
       )}
 
@@ -71,6 +73,11 @@ function Body({ data }: { data: Dashboard }) {
           sub={`avg ${inr(metrics.pos.avg_basket)}`}
         />
         <StatCard
+          label="Top Brand"
+          value={metrics.pos.top_brand ? titleize(metrics.pos.top_brand) : "—"}
+          sub="by sales"
+        />
+        <StatCard
           label="Top Department"
           value={metrics.pos.top_department ? titleize(metrics.pos.top_department) : "—"}
           sub="by sales"
@@ -102,14 +109,39 @@ function Body({ data }: { data: Dashboard }) {
 }
 
 export function App() {
-  const { data, error, loading, lastUpdated } = usePolling(fetchDashboard, POLL_MS);
+  const [stores, setStores] = useState<StoreInfo[]>([]);
+  const [storeId, setStoreId] = useState<string>(DEFAULT_STORE_ID);
+
+  // Fetch the switcher's store list once. On failure, stay single-store (the default id still polls).
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchStores(controller.signal)
+      .then((list) => {
+        if (!list.length) return;
+        setStores(list);
+        setStoreId((prev) => (list.some((s) => s.store_id === prev) ? prev : list[0].store_id));
+      })
+      .catch(() => {
+        /* no /stores — keep the default single store */
+      });
+    return () => controller.abort();
+  }, []);
+
+  // Poll only the selected store; `storeId` as resetKey restarts polling cleanly on a switch.
+  const fetcher = useCallback((signal: AbortSignal) => fetchDashboard(storeId, signal), [storeId]);
+  const { data, error, loading, lastUpdated } = usePolling(fetcher, POLL_MS, storeId);
   const now = useNow();
+
+  const storeName = stores.find((s) => s.store_id === storeId)?.name;
 
   return (
     <div className="app">
       <Header
         health={data?.health ?? null}
-        storeId={STORE_ID}
+        storeId={storeId}
+        storeName={storeName}
+        stores={stores}
+        onSelectStore={setStoreId}
         lastUpdated={lastUpdated}
         now={now}
         hasError={Boolean(error)}
@@ -127,7 +159,7 @@ export function App() {
         <div className="footer">
           <span>ShelfSense · metrics computed live from CCTV events + POS — never hardcoded.</span>
           <span>
-            Polling every {POLL_MS / 1000}s · {STORE_ID}
+            Polling every {POLL_MS / 1000}s · {storeName ? `${storeName} (${storeId})` : storeId}
           </span>
         </div>
       </footer>

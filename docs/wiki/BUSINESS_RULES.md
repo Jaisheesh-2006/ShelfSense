@@ -10,7 +10,9 @@
 - **Session** — one customer visit; bounded by entry and exit. The unit for funnel/conversion
   (sessions, **never raw detections**, to avoid double counting — rubric-critical).
 - **Zone** — a named store region from the floor plan ([[GROUND_TRUTH]] §4): entrance, skincare_aisle,
-  makeup_aisle, foh_center, checkout, accessories, stockroom (staff).
+  makeup_aisle, foh_center, checkout, accessories, stockroom (staff). Each camera maps to one zone:
+  by default the hand-mapped `primary_zone`, or — for **product** cameras with `VLM_ENABLED=true` — a
+  **Gemini-labelled** zone read from the shelves (entrance/checkout/stockroom stay role-known; ADR-0027).
 - **Visitor** — one visit session, identified by a `visitor_id` (Re-ID). Re-entries keep the same id.
 - **Transaction** — one POS order from the CSV (`distinct order_id`). 24 on 10-Apr-2026.
 
@@ -28,12 +30,16 @@
   re-entries the *same* visitor; staff (dark-uniform, ADR-0009) are excluded. This is the conversion
   denominator. (Rationale: on ~2-min clips most shoppers are already inside, so entrance-crossings ≈ 0 —
   ADR-0006/0007. Validated count on the clip: **2 customers** + 3 staff.)
-- **POS source:** Brigade CSV → `transaction_id` (invoice/order), `timestamp` (order_date+order_time),
-  `basket_value` (order total). 24 transactions on 10-Apr ([[GROUND_TRUTH]] §2).
+- **POS source (corrected dataset, [[GROUND_TRUTH]] §2):** 7-col `POS - sample transactions.csv` → a
+  **transaction = distinct `order_time`** (`order_id` is now per-line-item, not the basket key),
+  `timestamp` from `order_date`+`order_time` (local, no tz), `basket_value` = Σ `total_amount` per
+  timestamp. **24 transactions**, store **ST1008** only (Store_1; Store_2 has no POS). **⚠ `pos_loader.py`
+  parses the OLD 20-col GMV format and must be reworked** before these KPIs are real again.
 - **⚠ Window caveat (handled, ADR-0012):** clips (~2 min) vs CSV (full day) differ, and no sale falls in
   the clip window. We **do not** divide mismatched windows: we report the honest clip conversion (**0%**,
   `data_confidence="low"`) and demonstrate the correlation on a comparable window (`demo_conversion.py`).
-  The 24 real sales still power day-level KPIs (GMV ₹44,920, basket, peak hour) via `pos_day_metrics`.
+  The 24 real sales still power day-level KPIs (**total ₹34,331.71** via `total_amount`; basket, peak hour
+  12:00/19:00) via `pos_day_metrics`.
 
 ## Footfall (entry/exit)
 
@@ -58,7 +64,13 @@
 - **Rule (ADR-0009):** Brigade staff wear a **complete black uniform**, so `is_staff` is set from a
   **dark-uniform appearance score** — the min of the upper- and lower-body dark-pixel fraction (HSV Value
   ≤ `staff_dark_v_max`, central column), reusing the Re-ID crop. A track is staff when its mean score ≥
-  `staff_darkness_threshold`. The **stockroom (CAM4) is staff-only** and excluded at source.
+  `staff_darkness_threshold`. (The old Store_1 **stockroom cam (CAM4) was staff-only** and excluded at
+  source; it is **no longer in the corrected dataset** — [[GROUND_TRUTH]] §1.)
+- **Optional VLM override (ADR-0027):** when `VLM_ENABLED=true`, a **Gemini** call (once per
+  `visitor_id`, offline only) decides staff/customer and **overrides the heuristic when it clears
+  `vlm_staff_min_confidence`**; otherwise the dark-uniform heuristic stands. This is what makes staff
+  detection work for **Store_2 (pink staff)** without per-store colour tuning. Off by default, cached,
+  gate-safe — see [[DECISIONS]] ADR-0027.
 - **Aggregation:** the API treats a visitor as staff if **any** of their events is flagged.
 - **Excluded** from unique visitors, conversion, funnel, heatmap — staff are not customers.
 - **Limits:** a genuinely black-clothed customer would be misflagged (ours are grey/violet); bright shelf
@@ -119,9 +131,19 @@
   `health_strict_now=true` compares to real wall-clock for live ops. `STALE_FEED` when lag >
   `health_stale_feed_minutes`. `status=degraded` if the DB is unreachable or any feed is stale.
 
+## POS day-level KPIs (from the sales CSV, independent of the clip window)
+- `transaction_count` (distinct `order_time` baskets), `total_gmv` (Σ `total_amount`), `avg_basket`,
+  `peak_hour`, **`top_brand`** (busiest `brand_name`), and **`top_department`** (busiest category).
+- **`top_department`** rolls brands up via a curated **brand → department** taxonomy
+  (`shelfsense_common/departments.py`, ADR-0025): makeup · skincare · haircare · bath_and_body ·
+  personal_care · fragrance · accessories · **other** (unmapped/own-label). A basket's department follows
+  its dominant brand; the rollup excludes `other` so a meaningful category wins. Reference data — the
+  output still varies with real sales (no hardcoding). On the real file: **top brand Faces Canada, top
+  department makeup**.
+
 ## Store KPIs
 - Unique visitors, conversion rate, avg session duration, avg dwell per zone, top zones,
-  basket value (from POS), abandonment rate, queue depth.
+  basket value (from POS), top brand + top department, abandonment rate, queue depth.
 
 ## Configurable thresholds (env-driven, surfaced here — single source)
 

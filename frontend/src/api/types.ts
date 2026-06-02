@@ -1,10 +1,16 @@
 // Response shapes for the ShelfSense Intelligence API. Mirrors the FastAPI Pydantic models so the
 // dashboard is typed end to end.
 
+export interface StoreInfo {
+  store_id: string;
+  name: string;
+}
+
 export interface PosMetrics {
   transaction_count: number;
   total_gmv: number;
   avg_basket: number;
+  top_brand: string | null;
   top_department: string | null;
   peak_hour: number | null;
 }

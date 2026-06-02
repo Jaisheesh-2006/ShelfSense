@@ -87,9 +87,7 @@ class StaffClassifier:
     customer can dwell long too, and we only have two real customers to protect.
     """
 
-    def __init__(
-        self, threshold: float, presence_fallback_ms: int | None = None
-    ) -> None:
+    def __init__(self, threshold: float, presence_fallback_ms: int | None = None) -> None:
         self.threshold = threshold
         self.presence_fallback_ms = presence_fallback_ms
         self._tracks: dict[tuple[str, int], _TrackDarkness] = {}

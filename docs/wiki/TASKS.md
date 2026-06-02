@@ -123,4 +123,34 @@
   **Validated:** `tsc` clean, `vite build` ok (151 kB JS / 7 kB CSS), ruff + 105 tests green.
 - ⬜ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
 
+## Phase 4 — Dataset re-grounding (corrected dataset, 2026-06-02, ADR-0024)
+> The team replaced `docs/raw/` with a corrected dataset ([[GROUND_TRUTH]] §0). Wiki re-derived; **code
+> unchanged pending the user's decisions.** These tasks start once D1–D4 are settled.
+- ✅ **Re-derive the wiki** from the new raw (GROUND_TRUTH + propagate).
+- ✅ **D1 — Event schema decision (user): keep the flat PDF page-5 schema** — the pipeline "must emit
+  this." The richer `sample_events.jsonl` signals (demographics, groups, zone metadata, queue analytics)
+  are **not adopted**. We already emit page-5, so no code change. ([[EVENT_SCHEMA]], ADR-0024)
+- ✅ **D3 — Reworked `pos_loader.py`** for the 7-col CSV: basket = distinct `order_time` (24), value = Σ
+  `total_amount` (**₹34,331.71**), `invoice_number` dropped. Touched contract/ORM/repository/analytics/API/
+  frontend/tests/scripts; validated on the real CSV.
+- ✅ **Brand → department rollup (ADR-0025, user request):** curated `brand → department` taxonomy
+  (`departments.py`, grounded in the store's old `dep_name` + layout) so the API reports **both `top_brand`
+  and `top_department`** (real CSV → top brand Faces Canada, top dept makeup). ruff + **115 tests** + `tsc` green.
+- 🟡 **D2 — Store_2 (in progress):**
+  - ✅ **Dashboard store switcher + `GET /stores` registry (ADR-0026):** top-bar switcher; **only the
+    visible store polls** (`usePolling` resetKey); Store_2 assigned **`ST1009`**; config-driven (`STORES`).
+  - ✅ **VLM staff/zone signal ready (D5 below)** — the cross-store staff classifier (pink-staff fix) and
+    auto zone labelling that the detection half needs are now built and tested.
+  - ⬜ **Detection half (pending):** an `ST1009` `StoreConfig` + **multi-store detector loop**; process its
+    4 cams (two entrances; 960×1080) + tag events `ST1009`; calibrate entrance line(s) + zones from
+    `store 2 - layout.png`; **normalise all clips to one synthetic day**; **repoint the detector's compose
+    CCTV mount** to `Store_CCTV_Clips/` (old `CCTV Footage/` path is gone). Store_2 has **no POS** → no conversion.
+- ✅ **D5 — Optional VLM (Gemini) for staff + zone classification (ADR-0027):** offline-only, off by default
+  (gate-safe, no key/network for compose), cached, heuristic fallback. `detector/app/vlm.py` +
+  `staff_decider.py` + `zone_resolver.py`; staff per `visitor_id`, zone per product camera; schema unchanged.
+  ruff + `ruff format` clean, **138 tests** (+22 `test_vlm.py`, fake client). **Live two-store run pending the
+  user's `GEMINI_API_KEY`**, then commit `events.jsonl` + the VLM cache for replay.
+- ⬜ **D4 — Demographics/groups (deferred):** default **no** (full-face-blurred footage); revisit only if needed.
+- ⬜ **Re-run the acceptance-gate dry-run** after the Store_2 / detector clip-path changes land.
+
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

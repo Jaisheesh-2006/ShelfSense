@@ -181,6 +181,19 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   against the **latest ingested event** (a replayed clip reads healthy); `HEALTH_STRICT_NOW=true` switches to
   real-time for a live deployment (where a stopped feed *should* read stale). *Why:* demo-accurate and
   production-correct, with the toggle making the trade-off explicit. (ADR-0014.)
+- **A13 — Staff/zone classification uses an optional VLM offline, because a per-store colour rule
+  doesn't generalise.** The dark-uniform staff rule (A6) is correct for Store_1's black uniforms but
+  **wrong for Store_2, whose staff wear pink** — and staff exclusion drives the conversion denominator.
+  Rather than hand-tune a colour per store, we add an **optional Google Gemini** call used **only in the
+  offline detection pass**: once per `visitor_id` for staff/customer, and once per *product* camera to
+  label the zone from its shelves (entrance/checkout/stockroom stay role-known). It is **off by default**
+  (`VLM_ENABLED=false`), so `docker compose up` runs the heuristics with **no key/network** (gate-safe);
+  when on, verdicts are **cached** and the generated `events.jsonl` is committed, so the reviewer's run
+  makes **zero API calls** and stays deterministic. A low-confidence verdict, a missing key/SDK, or any
+  error **falls back to the heuristic** — the model can only improve the default, never break the gate.
+  *Why:* one signal that works across stores, scoring Part D (AI engineering) honestly; output varies
+  with the real image (integrity-safe) and the prompts are documented. (See [[DECISIONS]] ADR-0027,
+  `CHOICES.md` Decision 7.)
 
 ## 8. Known limitations & next steps
 - Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a
@@ -203,6 +216,10 @@ AI (Claude) was used throughout; the places it materially shaped the design — 
    cross-camera dedup), so we **reversed** — letting the requirement, not convenience, drive the design.
 3. **Model packaging — agreed.** Pre-baking YOLO weights into the image (assistant's suggestion) makes
    `docker compose up` deterministic and offline-safe; we agreed, accepting the image-size cost.
+4. **VLM for staff/zone — adopted with a strict boundary.** We use a VLM (Gemini) as an *offline*
+   judgment helper for staff and zone classification (§7 A13), but deliberately kept it **out of the
+   compose gate** (off by default, cached, heuristic fallback) so the AI improves quality without
+   coupling the reviewer's one-command run to a key or network.
 
 A working practice also came from this collaboration: a living knowledge base (`docs/wiki/`) the
 assistant reads each session, so design context compounds rather than resets.

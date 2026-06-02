@@ -56,13 +56,14 @@ def ev(
     )
 
 
-def txn(order: str, *, offset_s: int, amount: float = 1000.0, dept: str = "makeup") -> Transaction:
+def txn(
+    order: str, *, offset_s: int, amount: float = 1000.0, brand: str = "Faces Canada"
+) -> Transaction:
     return Transaction(
         transaction_id=order,
-        invoice_number=f"INV-{order}",
         timestamp=BASE + timedelta(seconds=offset_s),
         amount=amount,
-        department=dept,
+        brand=brand,
         line_items=2,
     )
 

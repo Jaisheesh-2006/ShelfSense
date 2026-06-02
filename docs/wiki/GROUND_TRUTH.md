@@ -5,159 +5,198 @@
 > changes `docs/raw/`**, then propagate changes outward. Do not put speculation here —
 > assumptions live in [[PROJECT]]/[[RISKS]]; this file is observed fact only.
 >
-> Last derived from raw on: 2026-05-31.
+> Last derived from raw on: **2026-06-02** (the team replaced the dataset — see §0).
 
-## What is in `docs/raw/`
+## §0. ⚠️ The dataset changed (2026-06-02) — read this first
+
+The user flagged data flaws in the **original** dataset (a single detailed Brigade store that
+didn't match the problem-statement PDF, no `sample_events.jsonl`, etc.). The team responded with a
+**corrected dataset**, now in `docs/raw/`; the old files were removed. The headline consequences:
+
+- The PDF's **"Apex Retail / 40 stores" framing is real**, not a print mistake. The earlier theory
+  (recorded in the old [[SPEC]]) that the PDF dataset description was an error is **wrong and retired**.
+- **`sample_events.jsonl` now exists** — and its schema is **richer than and different from** the PDF's
+  page-5 "Required Output Schema" (the flat schema our code emits). This is a genuine tension to resolve
+  (see §5 and [[EVENT_SCHEMA]]).
+- There are **two stores now** (Store_1, Store_2), not one. **Store_1 is the same physical store as the
+  old data** (identical clip durations); **Store_2 is brand new**.
+- The **POS file is a different, simpler format** (7 columns) and a different money total.
+- `store_layout.json` and `assertions.py` are named by the PDF but **still not provided** — we continue
+  to self-derive zones (from the layout images) and self-validate.
+
+## What is in `docs/raw/` (current)
 
 ```
 docs/raw/
-├── Assessment  Evaluation Frameworkb24a398.pdf      # the grading rubric (see §3)
-├── Brigade Road - Store layoutc5f5d56.pdf            # store floor plan (see §4)
-├── Brigade_Bangalore_10_April_26 (1)bc6219c.csv      # POS sales data (see §2)
-└── CCTV Footage/CCTV Footage/
-    ├── CAM 1.mp4 … CAM 5.mp4                          # 5 camera clips (see §1)
+├── Assessment  Evaluation Frameworkb24a398.pdf      # grading rubric (UNCHANGED — see §3)
+├── Purplle_Tech_Challenge_PS3f02573.pdf             # NEW problem statement (12 pp — see §5)
+├── POS - sample transactionsb1e826f.csv             # POS sample, 7-col (see §2)
+├── sample_eventsbe42122.jsonl                       # 13 example events, richer schema (see §5)
+└── Store_CCTV_Clips/
+    ├── Store_1/Store 1/   CAM 1 - zone · CAM 2 - zone · CAM 3 - entry · CAM 5 - billing · Store 1 - layout.png
+    └── Store_2/Store 2/   entry 1 · entry 2 · zone · billing_area · store 2 - layout.png
 ```
 
 ---
 
-## §1. CCTV footage
+## §1. CCTV footage — TWO stores now
 
-- **5 cameras**: `CAM 1.mp4` … `CAM 5.mp4`. Five fixed viewpoints of one store, all **1920×1080**.
-  Verified specs (via `scripts/extract_frames.py`, OpenCV):
-  | File | Resolution | FPS | Frames | Duration | Size |
-  |------|-----------|-----|--------|----------|------|
-  | CAM 1 | 1920×1080 | 29.97 | 4193 | 139.9 s | 172 MB |
-  | CAM 2 | 1920×1080 | 29.97 | 3774 | 125.9 s | 155 MB |
-  | CAM 3 | 1920×1080 | 29.97 | 4436 | 148.0 s | 182 MB |
-  | CAM 4 | 1920×1080 | 24.98 | 3647 | 146.0 s | 70 MB |
-  | CAM 5 | 1920×1080 | 24.98 | 3465 | 138.7 s | 70 MB |
-- **Time-synchronized:** on-screen timestamps are all ~**20:10–20:11 on 10/04/2026** (matches the
-  CSV date). So the clips are a **~2-min concurrent evening window**, watermark "CP IP Cam".
-- **Camera → store area** (from inspecting mid-clip frames in `docs/wiki/frames/`):
-  | Cam | Area | Pipeline role |
-  |-----|------|---------------|
-  | CAM 1 | Sales floor — skincare wall + browsing tables | product/browse zone |
-  | CAM 2 | Makeup wall (Lakme, Faces Canada, Maybelline); a **group of 3** browsing | product/browse zone; group-entry edge case |
-  | **CAM 3** | **Store ENTRANCE** — glass door, Purplle standee, mall corridor outside | **footfall line-crossing (linchpin)** |
-  | CAM 4 | **Back room / stockroom** — boxes, water dispenser, stool | **staff-only; exclude from footfall** |
-  | CAM 5 | **Checkout / billing counter** — POS desk, laptop, carry bags | checkout activity + funnel end |
-- **Funnel maps onto cameras:** Entered (CAM 3) → Browsed (CAM 1/2) → Checkout (CAM 5) → Purchased (POS CSV).
-- **No cross-camera re-ID by default:** views are different areas (little overlap), so a single
-  shopper is not followed entrance→checkout without re-ID. v1 funnel = **aggregate per-zone
-  session counts**, not per-person linking. Documented tradeoff (see [[DECISIONS]] PD-5).
-- **Implication:** footfall = entry/exit counting on **CAM 3**. CAM 4 detections are staff.
-  Reference frames saved at `docs/wiki/frames/CAM_*_{10,50,90}pct.jpg`.
-- **People in the clip (user ground truth, 2026-06-01):** across **all cameras** there are exactly
-  **7 distinct people = 2 customers + 5 staff** during the ~2-min window.
-  - **Staff (5)** wear a **complete black uniform** (shirt + trousers) → used as the staff signal
-    (dark-uniform appearance, [[DECISIONS]] ADR-0009). **Customers (2)** wear a **grey** top and a
-    **violet** top — both non-black, so appearance cleanly separates them from staff.
-  - **CAM 4 (stockroom) is empty** the entire window (only boxes / water dispenser / two backpacks) —
-    so the "anyone in the back room = staff" idea enrols nobody here; the room is unused in-clip.
-  - **CAM 5 (checkout) has a mirror / backlit display** that can double-detect its 2 staff (a
-    diagnostic found 10 tracks for 2 people). Handled by a walkable-floor mask ([[DECISIONS]] ADR-0010).
-  - **CAM 3 (entrance) sees mall-corridor pass-by** through the glass — *not* store visitors; the
-    entrance camera therefore counts footfall only, not visitors ([[DECISIONS]] ADR-0011).
-- **Entrance line (calibrated, Slice 2.0):** on CAM 3 the counting line runs along the **front
-  edge of the retail wood floor**: `(320,490) → (1140,415)`, `inside_sign=-1` (upper-left wood =
-  inside, lower-right dark threshold/mall = outside). Crossing onto the wood = entering the
-  shopping area. Defined in `shelfsense_common.contracts.zones` (`STORE`); overlay saved at
-  `docs/wiki/frames/CAM3_entrance_calibration.jpg`. **Refine in Slice 2.2** by overlaying real tracks.
+Cameras are now **named by role** in the filenames (no more guessing entrance/checkout/aisle).
+Verified specs via OpenCV (`scripts/extract_frames.py`-style probe):
 
-## §2. Business CSV — POS sales transactions
+**Store_1** — 1920×1080, **the same physical store as the old single-store data** (clip durations
+match the old CAM 1/2/3/5 exactly), now with role labels and **no stockroom camera** (old CAM 4 dropped).
+| File | Role | Resolution | FPS | Frames | Duration |
+|------|------|-----------|-----|--------|----------|
+| CAM 1 - zone | sales floor (skincare wall) | 1920×1080 | 29.97 | 4193 | 139.9 s |
+| CAM 2 - zone | sales floor (makeup wall) | 1920×1080 | 29.97 | 3774 | 125.9 s |
+| CAM 3 - entry | **entrance** (glass door, mall corridor) | 1920×1080 | 29.97 | 4436 | 148.0 s |
+| CAM 5 - billing | **checkout / billing counter** | 1920×1080 | 24.98 | 3465 | 138.7 s |
 
-- **Store:** `store_id = ST1008`, `store_name = Brigade_Bangalore`, `city = Bangalore`.
-  A **Purplle** beauty retail store.
-- **Date:** all rows `10-04-2026`. **Time span 12:15:05 → 21:39:55** (≈ store open window that day).
-- **Grain:** one row = **one product line item**. Rows sharing an `order_id` / `invoice_number`
-  = one **transaction/basket**.
-- **Aggregates (observed):**
-  - 101 line items
-  - **24 unique orders = 24 unique invoices = 24 transactions**
-  - **21 unique customer numbers** (caveat: "Guest" rows use placeholder numbers like
-    `1000000000` and repeated guest numbers — so unique-customer ≠ unique-transaction exactly)
-  - Total GMV ₹44,920
-  - Department mix: makeup (54), skin (27), bath-and-body (9), hair (6), personal-care (4), fragrance (1)
-- **Key columns:** `order_id`, `invoice_number`, `invoice_type` (all `sales` here; `return_id`
-  column exists for returns), `order_date`, `order_time`, `store_id`, `store_name`, `city`,
-  `customer_name`, `customer_number`, `sku`, `product_id`, `product_name`, `brand_name`,
-  `dep_name`, `sub_category`, `qty`, `GMV`, `NMV`, `total_amount`, `salesperson_name`, …
-- **Why it matters:** this is the **conversion numerator source**. `transactions = count(distinct order_id)`.
-  Conversion rate = transactions ÷ footfall (footfall comes from CCTV). Also enables
-  basket size, peak-hour sales, salesperson/department breakdowns.
+**Store_2** — **NEW store**, portrait-ish **960×1080**, 25 fps, ~1.5–2-min clips. Different camera
+set: **two entry cameras** plus a floor and a billing view.
+| File | Role | Resolution | FPS | Frames | Duration |
+|------|------|-----------|-----|--------|----------|
+| entry 1 | entrance #1 | 960×1080 | 25.00 | 2636 | 105.4 s |
+| entry 2 | entrance #2 | 960×1080 | 25.00 | 2129 | 85.2 s |
+| zone | main floor | 960×1080 | 25.00 | 2898 | 115.9 s |
+| billing_area | checkout / billing | 960×1080 | 25.00 | 3126 | 125.0 s |
 
-### ⚠️ The window-mismatch fact
-The video is **~2 minutes per camera**; the CSV covers a **full ~9.5-hour trading day**.
-They are **not the same time window**, so conversion cannot be computed by naively dividing
-full-day transactions by 2-min footfall. This is the central real-world ambiguity. Handling
-options (decision pending, see [[DECISIONS]] PD-3): treat the clip as a representative sample
-window; or compute footfall-rate and conversion-rate per comparable window; or demonstrate the
-pipeline on the clip while documenting how it would run over full-day footage. **Must be stated
-explicitly** — silently dividing mismatched windows would be wrong and looks naive to reviewers.
+- **Clips are still ~2 minutes**, *not* the "20 minutes per clip" the PDF describes (§5). The PDF's
+  dataset spec is aspirational/generic; the actual delivered clips are short. **The window mismatch with
+  the full-day POS therefore still holds** (§2).
+- **Time-synchronized (Store_1):** burnt-in timestamps ~**20:10–20:11 on 10/04/2026** (matches the POS
+  date), watermark "CP IP Cam" — a concurrent evening window. (Store_2 sync window not yet read frame-by-frame.)
+- **People in Store_1 (carried from the prior verified ground truth — same clips):** across the cameras
+  there are **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. Staff dark-uniform is
+  the staff signal ([[DECISIONS]] ADR-0009); CAM 5 has a **mirror / backlit display** that double-detects
+  (handled by a walkable-floor mask, ADR-0010); the entrance view is dominated by **mall-corridor pass-by**
+  so it counts footfall only, not visitors (ADR-0011). **Store_2's people count is not yet derived.**
+- **Anonymisation (PDF §3.2):** full-face blur on every frame, store branding masked, no audio. Faces are
+  unusable → Re-ID must be appearance/trajectory-based (which ours is), and any gender/age signal in
+  `sample_events.jsonl` (§5) cannot come from clear faces.
+
+## §2. POS sales — new simpler format
+
+File: `POS - sample transactionsb1e826f.csv`. **7 columns** (much simpler than the old 20-column
+Purplle export):
+`order_id, order_date, order_time, store_id, product_id, brand_name, total_amount`.
+
+- **Store:** `store_id = ST1008` for **every** row (so the POS covers **one** store — presumably Store_1;
+  **Store_2 has no POS data**).
+- **Date:** all `10-04-2026`. **Time span 12:15:05 → 21:39:55** (full trading day).
+- **Grain:** one row = **one product line item**. `order_id` is now **unique per row (1…101)** — it is
+  *not* the basket key anymore. **Rows sharing an `order_time` = one basket/transaction.**
+- **Aggregates (computed):**
+  - **101 line items**
+  - **24 distinct `order_time` values = 24 transactions/baskets** (matches the prior "24 transactions")
+  - **Total `total_amount` = ₹34,331.71** (≠ the old GMV ₹44,920 — different column/figure; this file has
+    no GMV/NMV split). **10 line items are ≤ ₹1** (mostly `Purplle`-branded freebies/promos).
+  - Brand mix (line items): Faces Canada 32 · Good Vibes 14 · Purplle 10 · NY Bae 10 · DERMDOC 6 · GUBB 3 · …
+  - Peak hours by line items: **12:00 and 19:00 (tied, 27 each)**.
+  - **Department rollup** (brands → categories, ADR-0025): by basket — makeup 14 · skincare 5 ·
+    bath_and_body 2 · personal_care 1 · haircare 1 · other 1. **top brand Faces Canada · top dept makeup.**
+    No `dep_name` column exists anymore — we derive departments from `brand_name` via a curated taxonomy
+    grounded in the store's old `dep_name` values + the layout (see [[DECISIONS]] ADR-0025, `departments.py`).
+- **PDF's documented POS schema differs again:** the PDF (§5) shows `store_id, transaction_id, timestamp,
+  basket_value_inr` with ISO-8601-Z timestamps. The **actual CSV** uses `order_id` + split `order_date`/
+  `order_time` (local, no tz) + `total_amount`. So three POS shapes have existed; **build to the real CSV.**
+- **Why it matters:** conversion **numerator source**. `transactions = count(distinct order_time)`.
+  Conversion correlates a billing-zone visitor to a transaction by the **time-window + store** rule (§5).
+- **⚠ Code impact:** `pos_loader.py` parses the **old** format (GMV column, `order_id` grouping, `dep_name`,
+  IST `order_date+order_time`) → it **will break / mis-read** on this file. Rework is a pending decision
+  ([[RISKS]], [[TASKS]]).
+
+### ⚠️ The window-mismatch fact (still true)
+Clips are **~2 minutes**; the CSV covers a **full ~9.5-hour day**. They are **not the same window**, so
+conversion can't be a naive full-day-txns ÷ clip-footfall divide. We report the honest clip conversion and
+demonstrate the correlation on a comparable window ([[DECISIONS]] ADR-0012, [[BUSINESS_RULES]]). The PDF's
+"20-min clips" would narrow this gap; the **delivered ~2-min clips do not**.
 
 ---
 
-## §3. Evaluation rubric (the PDF) — authoritative grading
+## §3. Evaluation rubric (`Assessment … Frameworkb24a398.pdf`) — UNCHANGED
+
+This file is byte-identical to the prior dataset's rubric. Re-confirmed contents:
 
 **Philosophy:** end-to-end system problem, not model building. Rewards functional correctness,
-engineering judgment, clarity of reasoning. "A strong candidate builds a system that works,
-makes reasonable trade-offs, and can explain them."
+engineering judgment, clear reasoning.
 
-**Acceptance Gate (mandatory — fail any → rejected before scoring):**
-- `docker compose up` runs **without manual intervention**
-- `/metrics` endpoint returns a valid response
-- Detection pipeline produces **structured events**
-- **`DESIGN.md` and `CHOICES.md`** present and non-trivial
-- System does not crash during basic execution
+**Acceptance Gate (fail any → rejected before scoring):** `docker compose up` runs without manual
+intervention · `/metrics` returns a valid response · pipeline produces **structured events** ·
+**`DESIGN.md` and `CHOICES.md`** present and non-trivial · system does not crash.
 
-**Reviewer time budget (~10 min):** 2m run+verify API · 2m inspect events · 3m validate API
-outputs · 2m read DESIGN/CHOICES · 1m score.
+**Reviewer time budget (~10 min):** 2m run+verify · 2m inspect events · 3m validate API · 2m read
+DESIGN/CHOICES · 1m score. Two reviewers per submission.
 
-**Scoring (100 marks):**
-| Bucket | Marks | Strong = |
-|--------|-------|----------|
-| Detection Pipeline | 30 | entry/exit close to actual; handles re-entry, staff, group entry; structured/consistent events |
-| **API & Business Logic** | **35** | all endpoints correct & consistent; **funnel session-based, no double counting**; anomaly detection logical & meaningful |
-| Production Readiness | 20 | `docker compose up` seamless; observability (logs, metrics, tracing); testing covers key scenarios + edge cases |
-| Engineering Thinking | 15 | CHOICES.md clear trade-offs; DESIGN.md clear architecture; independent reasoning |
+**Scoring (100):** Detection 30 · **API & Business Logic 35** · Production 20 · Engineering Thinking 15.
 
-**Validation reviewers run:** sample clip entry-count vs system output · inspect event schema ·
-`/metrics` logically consistent · `/funnel` shows expected drop-off.
+**Integrity check:** hardcoded outputs / outputs not varying with input / lack of real computation →
+**score capped at 50**.
 
-**Integrity check:** hardcoded outputs / outputs not varying with input / lack of real
-computation → **score capped at 50**.
+**Shortlisting:** 85+ strong · 70–85 interview · 60–70 above average · **top 30** selected. Tie-breakers:
+edge-case handling, cleaner design, stronger grasp of the business metric, clear reasoning.
 
-**Shortlisting:** 85+ strong, 70–85 interview, 60–70 above average. Top 30 selected.
-**Tie-breakers:** edge-case handling, cleaner/maintainable design, stronger grasp of the
-business metric, clear reasoning.
+> The full *problem statement* (parts A–E breakdown, schema, endpoints, edge cases, North Star) is the
+> separate `Purplle_Tech_Challenge_PS` PDF — digested in [[SPEC]] (§5 below summarises the data-relevant bits).
 
 ---
 
-## §4. Store layout (floor plan)
+## §4. Store layouts (per-store PNGs)
 
-Source: `docs/raw/Brigade Road - Store layout….pdf`. Top-down 2D plan with dimensions in mm.
-Two variants: **"Current"** (matches the 10-Apr-2026 footage — use this) and **"Revised"**
-(future re-merchandising — ignore for now). The plan is the **canonical source of zones** — we
-no longer invent/hand-draw zones; we use the store's actual zones.
+Source: `Store 1 - layout.png` and `store 2 - layout.png` (top-down plans; the old layout *PDF* is gone).
+These are the **canonical zone source** — we use the store's real zones, not hand-drawn ones.
 
-- **Shape:** long narrow store, ~6.4 m × ~4 m. Glass door **entrance on the left**; cash counter
-  on the **right**.
-- **Top wall — skincare gondola (→ CAM 1):** `EB · TFS · GV · DermDoc · Minimalist · Aqualogica · Pilgrim · D&K`.
-- **Bottom wall — makeup gondola (→ CAM 2):** `Maybelline · Faces · Lakme · Swiss+Renee · Mars+Nybae · Alps · L'Oréal · Beauty Essentials`.
-- **Center F.O.H (Front of House):** Fragrance/Nail unit + two **Makeup Unit** tables (browsing tables seen in CAM 1/2).
-- **Right end (→ CAM 5):** **Cash Counter** (checkout) + **Accessories** bay.
-- **Stockroom (CAM 4):** not on the plan — separate back room, staff-only.
+- **Store_1** (same as the old Brigade plan): long narrow store, glass **entrance on the left**, **cash
+  counter on the right**. Top wall = **skincare gondola** (Salm/TFS/…/Minimalist/Aqualogica/Foxtale/JC →
+  CAM 1). Bottom wall = **makeup gondola** (Faces/Mars+NYBae/Mens/L'Oréal/Beauty → CAM 2). Centre = **F.O.H**
+  (Fragrance/Nail unit + two **Makeup Unit** tables). Right end = **Cash Counter** + **Accessories** (CAM 5).
+- **Store_2** (new, larger): **entrance at the bottom-centre** (storefront glazing), **B.O.H (back of house)
+  top-right**, perimeter **wall units (1–13)**, two angled centre gondolas, a **central cash counter**, and
+  an **F.O.H** makeup area on the right. More zones than Store_1.
 
-**Canonical zones (v1):** `entrance` (CAM 3) · `skincare_aisle` (CAM 1) · `makeup_aisle` (CAM 2) ·
-`foh_center` (makeup-unit/fragrance tables) · `checkout` (CAM 5) · `accessories` (CAM 5) ·
-`stockroom` (CAM 4, excluded). Brand bays above are available as finer sub-zones later.
+**Canonical zones (v1, Store_1):** `entrance` (CAM 3, footfall only) · `skincare_aisle` (CAM 1) ·
+`makeup_aisle` (CAM 2) · `foh_center` · `checkout` + `accessories` (CAM 5). Store_2 zones are **not yet
+mapped**.
+
+## §5. New problem statement PDF + `sample_events.jsonl` (the schema tension)
+
+**`Purplle_Tech_Challenge_PS` PDF (authoritative for WHAT to build — digested in [[SPEC]]):**
+- Business framing: **Apex Retail, 40 stores / 8 cities**; offline stores are a data blind spot.
+- Dataset *as described*: 5 stores × 3 cams × **20 min**, + `store_layout.json` + `pos_transactions.csv`
+  + `sample_events.jsonl` (200 events) + `assertions.py` (10 example tests). **Delivered reality differs**
+  (2 stores, 4 cams, ~2-min clips, layout PNGs, a 7-col POS, 13 sample events, no JSON layout, no assertions).
+- **Page-5 "Required Output Schema" = the flat event** `{event_id, store_id, camera_id, visitor_id,
+  event_type, timestamp, zone_id, dwell_ms, is_staff, confidence, metadata{queue_depth, sku_zone,
+  session_seq}}` with **8 event types** (ENTRY, EXIT, ZONE_ENTER, ZONE_EXIT, ZONE_DWELL,
+  BILLING_QUEUE_JOIN, BILLING_QUEUE_ABANDON, REENTRY). **This is exactly what our code emits.**
+- 6 endpoints, the 7 edge cases, the 5-min billing-window conversion rule, Parts A–E + bonus — all in [[SPEC]].
+
+**`sample_events.jsonl` (13 events; "to help you validate your detection layer") — a DIFFERENT, richer
+schema** from a sample store (`store_1076` / `ST1076`, Mumbai, 2026-03-08; just illustrating the format).
+It is **internally inconsistent** (field names differ across event types) and **does not match the page-5
+schema**. Three observed shapes:
+- **entry / exit:** `event_type`(lowercase), `id_token`, `store_code`, `camera_id`, `event_timestamp`,
+  `is_staff`, **`gender_pred`, `age_pred`, `age_bucket`, `is_face_hidden`, `group_id`, `group_size`**.
+- **zone_entered / zone_exited:** `track_id`, `store_id`, `camera_id`, `zone_id`, **`zone_name`,
+  `zone_type`(SHELF/DISPLAY/BILLING), `is_revenue_zone`**, `event_time`, **`zone_hotspot_x/y`**, `gender`, `age`.
+- **queue_completed / queue_abandoned:** `queue_event_id`, `track_id`, …, **`queue_join_ts`,
+  `queue_served_ts`(null if abandoned), `queue_exit_ts`, `wait_seconds`, `queue_position_at_join`,
+  `abandoned`**, hotspot, demographics.
+
+→ **Open tension (do not silently pick one):** the PDF's page-5 schema (what we built and what the *gate
+example* uses) vs. the provided sample (richer: demographics, groups, zone metadata, queue analytics,
+hotspots). Whether to keep the flat schema, adopt the sample's, or **enrich ours toward it** is a pending
+design decision — see [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0024.
 
 ## What this implies for us (carried into the rest of the wiki)
 
-- Footfall counting (entry/exit) on the **entrance camera** is the linchpin of both Detection
-  (30) and conversion. Identify that camera first.
-- The funnel and `/metrics` correctness is the **largest scored bucket (35)** — invest there.
-- Everything must **compute from input** (integrity cap). No hardcoded numbers anywhere.
-- Ship a **one-command, non-crashing, observable** demo; write strong DESIGN.md + CHOICES.md.
-- Document the window-mismatch assumption prominently — it's exactly the "real-world ambiguity"
-  the rubric rewards.
+- Our emitted schema already matches the PDF's **page-5 Required Output Schema** — the authoritative,
+  gate-referenced one. The richer `sample_events.jsonl` is the main new thing to decide on.
+- **Two stores**: the API is per-store already; the **detection pipeline currently processes one store**
+  (Store_1) — running Store_2 and tagging events with the right `store_id` is pending.
+- **POS loader must be reworked** for the new 7-col CSV before conversion KPIs are real again.
+- The big scored bucket is still **API & Business Logic (35)**; integrity cap still applies (compute from
+  input). Ship a **one-command, non-crashing, observable** demo with strong DESIGN.md + CHOICES.md.
+- Document the window mismatch and the schema tension prominently — they are exactly the "real-world
+  ambiguity" the rubric rewards.

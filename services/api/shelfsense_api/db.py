@@ -68,16 +68,20 @@ class VisitSession(Base):
 
 
 class Transaction(Base):
-    """POS transaction loaded from the sales CSV (conversion numerator)."""
+    """POS transaction (a basket) loaded from the sales CSV (conversion numerator).
+
+    `order_id` is the synthesized basket key (store_id + order_date + order_time); `gmv` stores the
+    basket's summed `total_amount`; `brand` is the basket's dominant `brand_name` (the old
+    `dep_name`/`department` column is gone from the corrected dataset).
+    """
 
     __tablename__ = "transactions"
 
     order_id: Mapped[str] = mapped_column(String, primary_key=True)
-    invoice_number: Mapped[str | None] = mapped_column(String, nullable=True)
     ts_ms: Mapped[int] = mapped_column(BigInteger, index=True)
     line_items: Mapped[int] = mapped_column(Integer, default=0)
     gmv: Mapped[float] = mapped_column(Float, default=0.0)
-    department: Mapped[str | None] = mapped_column(String, nullable=True)
+    brand: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Metric(Base):

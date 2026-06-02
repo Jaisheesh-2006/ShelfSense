@@ -70,8 +70,11 @@
 ---
 
 ## ADR-0005 — Re-align to the authoritative problem statement ([[SPEC]])
-- **Date:** 2026-05-31 · **Status:** Accepted (user confirmed raw/ is the final data; PDF dataset
-  description is a print mistake; all other spec sections are authoritative).
+- **Date:** 2026-05-31 · **Status:** Accepted — **but its "print mistake" premise is REVERSED by ADR-0024
+  (2026-06-02).** The substantive decisions below (adopt the flat prescribed schema + 8 types, the
+  prescribed endpoints, require Re-ID, drop the broker, keep Postgres) **still stand**; only the framing
+  that "the PDF dataset description is a print mistake and the single Brigade store is final" was wrong —
+  the team later delivered the corrected multi-store dataset the PDF described.
 
 What changes vs. our earlier design:
 
@@ -658,3 +661,144 @@ What changes vs. our earlier design:
 - **Rationale:** fewer moving parts on the one-command gate path, a system where every running service
   is load-bearing (what the reviewer sees == what the architecture claims), and the long-standing
   "Redis's fate" open item closed honestly rather than by inventing a use for it.
+
+---
+
+## ADR-0024 — Re-ground on the corrected dataset; schema + POS-loader decisions
+- **Date:** 2026-06-02 · **Status:** **Partially resolved** — D1 (schema) + D3 (POS loader) done; D2
+  (Store_2) + D4 (demographics) deferred by the user.
+- **Context:** The user flagged flaws in the original dataset (a single detailed Brigade store that didn't
+  match the problem-statement PDF; no `sample_events.jsonl`). The team delivered a **corrected dataset**,
+  now in `docs/raw/` (old files removed). [[GROUND_TRUTH]] was re-derived; this ADR records what changed and
+  the decisions it forces. **The "print mistake" premise of ADR-0005 is reversed** — the PDF is real as
+  written; the Apex/40-store framing stands.
+- **What changed (verified from raw):**
+  1. **Two stores** under `Store_CCTV_Clips/` — **Store_1** (= the old store, ST1008; cams renamed by role
+     `CAM 1/2 - zone`, `CAM 3 - entry`, `CAM 5 - billing`; the old CAM 4 stockroom dropped) and **Store_2**
+     (NEW; `entry 1`/`entry 2`/`zone`/`billing_area`; 960×1080, 25 fps). Clips are still **~2 min**, not 20.
+  2. **New POS** (`POS - sample transactions.csv`): 7 cols, `order_id` now per-line-item, **transaction =
+     distinct `order_time`** (24 of them), `total_amount` sums to **₹34,331.71** (≠ old GMV ₹44,920), ST1008
+     only. The old 20-col format is gone → **`pos_loader.py` will break**.
+  3. **`sample_events.jsonl` exists** (13 events) in a **richer, internally-inconsistent schema** that
+     **conflicts with the PDF page-5 "Required Output Schema"** our code emits — adds demographics
+     (`gender_pred`/`age_pred`/`age_bucket`), `is_face_hidden`, groups (`group_id`/`group_size`), zone
+     metadata (`zone_name`/`zone_type`/`is_revenue_zone`/`zone_hotspot_x,y`), and queue analytics
+     (`queue_join_ts`/`served_ts`/`exit_ts`/`wait_seconds`/`queue_position_at_join`/`abandoned`). See
+     [[EVENT_SCHEMA]].
+  4. Floor plans are now **per-store PNGs** (Store_1 = same layout; Store_2 = new, larger). `store_layout.json`
+     and `assertions.py` are named by the PDF but **still not provided** → keep self-deriving zones + self-validating.
+  5. The **Evaluation Framework PDF is unchanged** (rubric, gate, integrity cap, top-30).
+- **Decisions:**
+  - **(D1) Event schema — ✅ RESOLVED (user, 2026-06-02): keep the flat PDF page-5 schema.** "It's clearly
+    given your pipeline must emit this, so follow page-5 only." The richer `sample_events.jsonl` signals
+    (demographics, groups, zone metadata, queue analytics) are **not adopted** — deliberate scope choice
+    ([[EVENT_SCHEMA]]). No code change needed (we already emit this schema).
+  - **(D3) POS loader rework — ✅ DONE (2026-06-02):** reworked for the 7-col CSV — basket = distinct
+    `order_time`, value = Σ `total_amount`, `brand` replaces the gone `dep_name` (`department`→`brand`,
+    `top_department`→`top_brand`), `invoice_number` dropped. See [[BUSINESS_RULES]], [[GROUND_TRUTH]] §2.
+  - **(D2) Second store — ⏳ PENDING (deferred by user):** process Store_2 and tag events with a distinct
+    `store_id` (API is already per-store), or document it out-of-scope.
+  - **(D4) Demographics/groups — ⏳ PENDING (deferred):** whether to produce gender/age/group signals given
+    **full-face blur** in the footage (accuracy + integrity). Default per D1 is **no**.
+- **Alternatives considered for *this* ADR:** silently pick one schema and refactor (rejected — the conflict
+  is material and reviewer-visible; the user wants to decide); or ignore the sample and keep building (rejected
+  — the sample is the provided validation aid and may reflect the held-out `assertions.py`).
+- **Consequences now:** the prior "validated" pipeline numbers (Store_1: unique 2, funnel 2→2→0→0) are **not
+  invalidated as logic**. The **POS loader is now fixed (D3)** so conversion/day-KPIs read the new CSV again
+  (day total **₹34,331.71**). The full clean-machine gate dry-run should still be re-run once Store_2/detector
+  clip paths are settled (D2).
+- **Rationale:** capture the corrected reality and the exact open decisions so the next working session (and
+  the user) can choose deliberately, instead of drifting into a refactor.
+
+---
+
+## ADR-0025 — Brand → department taxonomy (restore a department rollup)
+- **Date:** 2026-06-02 · **Status:** Accepted (user request)
+- **Context:** The corrected POS CSV has `brand_name` but **no `dep_name`** (D3 made `top_brand` the only
+  category KPI). The user asked to also report **`top_department`** by grouping brands into categories
+  ("Minimalist → skincare, Lakme/Maybelline → makeup"), using the store layout as the mental model.
+- **Decision:** Add a **curated `brand → department` lookup** (`shelfsense_common/departments.py`,
+  `department_for(brand)`), and derive `Transaction.department` from each basket's dominant brand. The API
+  reports **both `top_brand` and `top_department`** (by basket count). Departments: makeup, skincare,
+  haircare, bath_and_body, personal_care, fragrance, accessories, **other** (unmapped/own-label).
+- **Provenance (why this isn't invented):** anchored on the store's *own* historical taxonomy from the
+  now-removed detailed CSV (`dep_name` = makeup/skin/hair/bath-and-body/personal-care/fragrance),
+  corroborated by the layout's gondolas (skincare top wall, makeup bottom wall, fragrance/nail centre,
+  accessories at checkout), and public domain knowledge for the ~22 specific POS brands.
+- **Alternatives:** (a) **layout-only** mapping — rejected: the layout prints only a few brand bays, so
+  most POS brands (COSRX, Neutrogena, Round Lab…) would fall to "unknown"; (b) rank by **revenue (₹)**
+  instead of basket count — viable and a one-line change, but count matches `top_brand` and "busiest
+  category" is the footfall-aligned read; kept count, noted revenue as easy to switch.
+- **Trade-offs / honesty:** it's **reference data** (a lookup), like the zone config — the *output* still
+  varies with real sales, so no integrity-cap risk. Two genuine judgment calls are flagged inline
+  (`Garnier`→skincare; `Purplle` own-label→`other`); the `top_department` rollup **excludes `other`** so a
+  meaningful category wins. A basket's department follows its *dominant* brand (a multi-brand basket is
+  attributed once) — a documented simplification. Mapping is one dict to edit if the business disagrees.
+- **Validated:** real CSV → `top_department: makeup`; basket split makeup 14 / skincare 5 / bath_and_body 2
+  / personal_care 1 / haircare 1 / other 1 (= 24). ruff clean; **115 tests** (+4 `test_departments`); `tsc` clean.
+
+---
+
+## ADR-0026 — Multi-store registry + dashboard store switcher (lazy polling)
+- **Date:** 2026-06-02 · **Status:** Accepted (user request) — **partial D2: UI/serving only, no Store_2
+  detection yet**
+- **Context:** The corrected dataset has two stores ([[GROUND_TRUTH]] §0). The user asked for a switcher
+  at the top of the dashboard to flip between available stores, with **only the store currently on screen
+  polling** the API (don't fan out polls across all stores).
+- **Decision:**
+  - **Store registry in config** (`STORES` = "id:name,…", parsed by `Settings.store_list`) exposed via a
+    new **`GET /stores`** endpoint (`[{store_id, name}]`). Single source of truth, config-driven.
+  - **Store_2 has no id of its own** in the data (the POS is ST1008-only), so we **assign `ST1009`** for
+    it — documented, like our zone config; overridable via `STORES`.
+  - **Frontend:** fetch `/stores` once → a `<select>` switcher in the header; `usePolling` takes the
+    selected `store_id` as a **resetKey** so switching aborts the old store's in-flight request + interval
+    and starts the new one. **Exactly one store (the visible one) is ever polled.**
+  - The API is already per-store, so serving a second store needs **no API change** beyond the registry.
+- **Alternatives:** (a) hardcode the store list in the frontend — rejected (not config-driven, drifts from
+  the API); (b) poll all stores and toggle visibility — rejected (wasteful, the user explicitly wants only
+  the shown store polled); (c) derive the list from stores that have events (`/health`) — rejected for now
+  because Store_2 has no events yet, so it wouldn't appear in the switcher.
+- **Trade-offs / notes:** switching briefly shows "Connecting…" then the new store (state resets so we
+  never render store A's numbers under store B's header). **Store_2 currently shows empty** — its video
+  isn't processed yet (the detection half of D2: repoint the CCTV mount, calibrate its two entrances +
+  zones, tag `ST1009`). This ADR delivers the switcher + registry; Store_2 *data* is still pending.
+- **Validated:** `GET /stores` returns both stores; ruff clean; **116 tests** (+1 `test_list_stores`);
+  frontend `tsc` clean.
+
+## ADR-0027 — Optional VLM (Gemini) for staff + zone classification, offline only
+- **Date:** 2026-06-03 · **Status:** Accepted (user request) — VLM *logic* landed; the actual
+  two-store generation run happens later once the user supplies `GEMINI_API_KEY`.
+- **Context:** Two heuristics don't generalise across stores. **Staff** = "dark uniform" (ADR-0009)
+  is right for Store_1 (black) but **wrong for Store_2 (pink staff)**, and staff exclusion drives the
+  conversion denominator. **Zones** are a hand-mapped `primary_zone` per camera ([[ARCHITECTURE]],
+  PD-4) — fine for one known store, but doesn't scale to a new store's shelves. The Problem-Statement
+  PDF explicitly invites "LLMs/VLMs for zone classification, staff detection, or anything useful".
+- **Decision:** add an **optional** VLM (Google **Gemini Flash**, multimodal) used **only in the
+  offline detection pass** to answer two narrow questions:
+  - **staff vs customer** — once per **`visitor_id`** (cached), overriding the dark-uniform heuristic;
+  - **camera zone** — once per **product camera** (entrance/checkout/stockroom are role-known and
+    never relabelled), choosing from the existing `ZoneName` vocabulary so `zone_id` stays consistent.
+  Implementation: `detector/app/vlm.py` (lazy-imported `google-genai` client, prompt builders, JSON
+  parse, `JsonFileCache`, `build_vlm_client` factory), `staff_decider.py` (heuristic + VLM, confidence
+  -gated, by-visitor), `zone_resolver.py` (per-camera override map). Wired into `main.py`; the event
+  schema is **unchanged** — verdicts only set existing `is_staff`/`zone_id`; the model's reason +
+  confidence go to logs/cache (eval material), not the event (page-5).
+- **Gate safety (non-negotiable):** `VLM_ENABLED=false` by default → `docker compose up` runs the
+  heuristics with **no key/network**. The SDK is lazy-imported and `build_vlm_client` returns `None`
+  on disabled/no-key/missing-SDK/error, so the pipeline **always falls back to the heuristic**.
+  Verdicts are **cached** (`/data/vlm/vlm_cache.json`) and the generated `events.jsonl` is committed,
+  so the **reviewer's run makes zero API calls** and stays deterministic.
+- **Cost:** sparse by design — Store_1 ≈ 7 staff + 2 zone calls; Store_2 ≈ ~8 staff + 1 zone call →
+  **~18 calls total**, one-time, cached. Trivially within the free tier.
+- **Alternatives:** (a) per-store colour rules (pink for Store_2) — rejected: brittle, doesn't scale,
+  re-tuned per store; (b) a trained staff/zone classifier — rejected: no labels, over-engineered for
+  a handful of people; (c) run the VLM live inside compose — rejected: couples the gate to a key +
+  network; (d) put the SDK in `common` — rejected: would force the dep on every service, so it lives
+  in the detector only.
+- **Trade-offs / notes:** VLM replies are non-deterministic → mitigated by temperature 0 + caching +
+  committed events. Adds `google-genai` to the detector image (modest, lazy-used). Keeps the
+  heuristic as both **fallback and baseline** for a CHOICES.md eval. **Integrity-safe:** output varies
+  with the real image, prompts are documented. See [[ARCHITECTURE]], [[BUSINESS_RULES]] (staff/zone),
+  [[RISKS]].
+- **Validated:** ruff + `ruff format` clean; **138 tests** (+22 `test_vlm.py`, fake client, no
+  network); detector imports clean. The live two-store run is **pending the user's API key**.

@@ -4,9 +4,44 @@
 > next session resumes instantly. Keep it short and current; history lives in git, detail in
 > [[TASKS]]. This replaces the empty root `CURRENT_STATE.md`.
 >
-> Last updated: 2026-06-02.
+> Last updated: 2026-06-03.
+
+## ⚠️ Dataset changed (2026-06-02) — re-grounding underway (ADR-0024)
+The team delivered a **corrected dataset** (old single-store Brigade data removed); the wiki is
+re-derived ([[GROUND_TRUTH]] §0). Decision status:
+1. ✅ **Event schema — DECIDED (user): keep the flat PDF page-5 schema** (what the pipeline must emit;
+   the richer `sample_events.jsonl` signals are not adopted). We already emit this → **no code change**.
+   ([[EVENT_SCHEMA]])
+3. ✅ **POS loader — REWORKED (done)** for the new 7-col CSV: basket = distinct `order_time` (24),
+   value = Σ `total_amount` (**₹34,331.71**), `invoice_number` dropped. Plus a **brand → department
+   taxonomy** (ADR-0025, `departments.py`) so the API now reports **both `top_brand` and
+   `top_department`** (real CSV → top brand Faces Canada, top dept makeup; split makeup 14/skincare
+   5/bath_and_body 2/…). Validated against the real CSV; ruff + **115 tests** + frontend `tsc` clean.
+2. 🟡 **Second store — PARTIALLY STARTED (ADR-0026):** the **dashboard store switcher + `GET /stores`
+   registry** are done — the top bar switches between stores and **only the visible store polls**; Store_2
+   is assigned **`ST1009`**. **Still pending (detection half):** an `ST1009` `StoreConfig` + multi-store
+   detector loop, calibrate its entrances + zones (960×1080), tag events `ST1009`, normalise all Store_2
+   clips to one synthetic day, and **repoint the detector CCTV mount** to `Store_CCTV_Clips/`. Until then
+   Store_2 shows empty in the switcher.
+5. ✅ **VLM staff/zone classification — LOGIC DONE (ADR-0027):** optional **Gemini Flash** used **only in
+   the offline detection pass** to classify **staff vs customer** (per visitor, replaces the dark-uniform
+   heuristic that breaks on Store_2's pink staff) and **product-camera zones** (per camera). `VLM_ENABLED`
+   is **off by default** (gate-safe: no key/network for `docker compose up`); cached + heuristic fallback.
+   Code/tests landed (`detector/app/vlm.py`, `staff_decider.py`, `zone_resolver.py`; **138 tests**). The
+   actual two-store generation run is **pending the user's `GEMINI_API_KEY`**.
+4. ⏳ **Demographics/groups — PENDING (deferred):** default per D1 is **no** (full-face-blurred footage).
+Store_1 logic counts (unique 2, funnel 2→2→0→0) remain valid; a full clean-machine gate dry-run should
+be re-run once Store_2 / detector clip paths are settled. See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024.
+
+**Single next action:** build the **ST1009 `StoreConfig` + multi-store detector loop** (the Store_2
+detection half), then — once the user adds `GEMINI_API_KEY` — run both stores with `VLM_ENABLED=true`
+and **commit `events.jsonl` + the VLM cache** for replay.
 
 ## Current phase
+
+> **Snapshot below is PRE-2026-06-02 (the old dataset).** It remains true *as logic/architecture* but the
+> POS figures (₹44,920) and "validated" data numbers are from the old data — see the ⚠ banner above and
+> [[GROUND_TRUTH]] §0 for what the corrected dataset changes.
 
 🟢 **Gate dry-run PASSED on the real stack; the auto-feed populates the API progressively; the full
 stack (incl. the React dashboard) builds and runs from one command.** Phase 1 + Slices 2.0–2.10 +
@@ -300,13 +335,19 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
 ## ▶ Next action
-Every prescribed endpoint exists, the stack feeds itself (2.8), compose is clean (2.9), the full stack
-incl. the dashboard builds + runs from one command, ids are deterministic, and the **clean-machine gate
-dry-run PASSED end-to-end** on `docker compose up --build` (2.10 made it populate progressively).
+**D1 (schema = flat page-5) and D3 (POS loader rework) are DONE.** Remaining ADR-0024 items, to discuss
+with the user next:
+- **D2 — Store_2:** decide whether to process it (repoint the detector to `Store_CCTV_Clips/Store_1` +
+  add `Store_2`; calibrate its two entrances + zones; tag a distinct `store_id`) or document out-of-scope.
+- **D4 — Demographics/groups:** default **no** (full-face-blurred footage); confirm or revisit.
 
-**0. (DO FIRST) Confirm the accuracy re-validation** — clean `docker compose down -v && up --build`,
-   then check `/stores/ST1008/metrics` shows `unique_visitors: 2` and funnel 2→2→0→0 under the tuned
-   fps5/imgsz480. This is the only open item gating "perf tuning done". If it drifts, raise fps/imgsz.
+After D2 lands: re-run the clean-machine **gate dry-run** end-to-end (detector → API → endpoints) on the
+corrected clips, then resume the Phase-3 polish below.
+
+— Prior status (still true *as logic* on Store_1): every prescribed endpoint exists, the stack feeds
+itself (2.8), compose is clean (2.9 / no-Redis 0023), ids are deterministic, and the clean-machine gate
+dry-run PASSED on the **old** data. ⚠ The detector's compose mount still points at the old
+`./docs/raw/CCTV Footage/...` path, which no longer exists — fixing that is part of D2.
 
 Then Phase 3 **polish + packaging** ([[TASKS]] Phase 3):
 1. ✅ **Redis's fate decided — removed** (ADR-0023). It was vestigial (only `/readyz` pinged it); rather

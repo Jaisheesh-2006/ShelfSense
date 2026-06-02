@@ -63,7 +63,7 @@ def txn(order: str, *, offset_s: int) -> Transaction:
         transaction_id=order,
         timestamp=BASE + timedelta(seconds=offset_s),
         amount=1000.0,
-        department="makeup",
+        brand="Faces Canada",
         line_items=1,
     )
 

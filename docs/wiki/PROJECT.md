@@ -13,10 +13,15 @@ Purplle / UpGrad Store Intelligence Challenge (2026). Start from **raw CCTV foot
 and build a complete, containerised system that produces meaningful, queryable store metrics. Graded
 as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on detection accuracy.
 
-## Inputs (full detail in [[GROUND_TRUTH]])
-- **5 CCTV cameras**, ~2-min clips, 1920×1080, time-synced (~20:10) — roles: Entry=CAM3, Floor=CAM1/2,
-  Billing=CAM5, Back room (staff)=CAM4.
-- **POS CSV** — Brigade_Bangalore (ST1008), 10-Apr-2026, **24 transactions** — the conversion source.
+## Inputs (full detail in [[GROUND_TRUTH]]; corrected dataset 2026-06-02)
+- **2 stores** of CCTV, cameras **named by role**:
+  - **Store_1** (= the old single store, ST1008): `CAM 1/2 - zone` (floor), `CAM 3 - entry`, `CAM 5 - billing`;
+    1920×1080, ~2-min, time-synced (~20:10). **No stockroom cam** anymore (old CAM 4 dropped).
+  - **Store_2** (NEW): `entry 1`, `entry 2`, `zone`, `billing_area`; 960×1080, 25 fps, ~1.5–2-min.
+- **POS sample CSV** — 7-col, store **ST1008** only (Store_1), 10-Apr-2026, **24 transactions** (₹34,331.71)
+  — the conversion source. Different format from the old CSV (`pos_loader.py` needs rework).
+- **`sample_events.jsonl`** — 13 example events in a **richer schema** than the PDF's page-5 one (open
+  decision, [[EVENT_SCHEMA]], ADR-0024).
 
 ## Target outputs
 - **Conversion rate** (North Star) = `converted visitors ÷ unique visitors` (POS 5-min billing-window
@@ -45,14 +50,21 @@ as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on de
 5. Outputs visibly **vary with input** (no hardcoding — avoid the 50-cap / integrity check).
 
 ## Working assumptions (challenge them; track in [[RISKS]])
-- **A1 (resolved):** the 5 clips are concurrent, time-synced views; CAM3 shows the entrance ([[GROUND_TRUTH]] §1).
-- **A2:** footfall is counted on CAM3 via entrance-line crossing (line calibrated, Slice 2.0).
-- **A3:** video (~2 min) vs CSV (full day) windows differ → conversion demonstrated on a comparable/
-  representative window, documented — not a naive full-day-txns ÷ clip-footfall divide.
-- **A4:** staff are classified (`is_staff`) and excluded; CAM4 (back room) is treated as staff space.
+- **A1 (resolved):** Store_1's clips are concurrent, time-synced views; `CAM 3 - entry` is the entrance
+  ([[GROUND_TRUTH]] §1). Store_2's sync window is not yet frame-verified.
+- **A2:** footfall is counted on the entrance cam via line crossing (Store_1 line calibrated, Slice 2.0;
+  Store_2 has **two** entrances — uncalibrated).
+- **A3:** clips (~2 min) vs POS (full day) windows differ → conversion demonstrated on a comparable/
+  representative window, documented — not a naive full-day-txns ÷ clip-footfall divide. (Unchanged: the
+  delivered clips are still ~2 min, not the PDF's 20 min.)
+- **A4:** staff are classified (`is_staff`) and excluded (Store_1: black-uniform signal, ADR-0009). The
+  stockroom cam no longer exists in the data.
 
-## Open questions
-- Conversion window semantics for the demo (the A3 trade-off — finalise when conversion lands, Slice 2.5).
-- Re-ID approach (embedding vs trajectory/appearance-distance) — decide in Slice 2.4.
+## Open questions (post-dataset-change — for discussion before code, ADR-0024)
+- **Event schema:** keep the flat PDF page-5 schema (what we emit), adopt `sample_events.jsonl`'s richer
+  schema, or enrich ours toward it (demographics, groups, zone metadata, queue analytics)? ([[EVENT_SCHEMA]])
+- **Second store:** process Store_2 and tag events with a distinct `store_id`? (API is already per-store.)
+- **POS loader:** rework `pos_loader.py` for the new 7-col CSV (transaction = distinct `order_time`).
+- **Demographics from blurred faces:** the PDF says full-face blur; can/should we emit gender/age at all?
 
 See [[DECISIONS]] for the decision log and [[RISKS]] for tracked unknowns.

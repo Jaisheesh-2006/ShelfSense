@@ -38,8 +38,11 @@ from app.crossing import CrossingDetector
 from app.frames import VideoFrameSource
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
 from app.staff import StaffClassifier, uniform_darkness
+from app.staff_decider import StaffDecider
 from app.track import PersonTracker
 from app.visits import VisitorRegistry
+from app.vlm import JsonFileCache, build_vlm_client
+from app.zone_resolver import resolve_zones
 from app.zone_tracker import ZoneEvent, ZoneTracker
 
 SERVICE = "detector"
@@ -50,21 +53,25 @@ def process_camera(
     clip_path: Path,
     tracker: PersonTracker,
     registry: VisitorRegistry,
-    staff: StaffClassifier,
+    staff: StaffDecider,
     sink: EventSink,
     settings: Settings,
     log,
     emitted_visitors: set[str],
+    zone_override: str | None = None,
 ) -> dict[str, int]:
     """Track one camera; emit zone + entrance + reentry events with global (Re-ID'd) visitor ids."""
     clip_start = settings.clip_start_dt
+    # The zone this camera's events carry: the VLM's label when it confidently read the shelves
+    # (zone_override), else the static hand-mapped primary_zone (ADR-0027). One value for the clip.
+    zone_value = zone_override or camera.primary_zone.value
     # The ENTRANCE camera contributes FOOTFALL (ENTRY/EXIT crossings) only — not zone-visitor
     # counts: it looks onto the mall corridor, so its zone detections are dominated by pass-by
     # pedestrians, not shoppers (ADR-0011, refining ADR-0007). Visitors come from the floor cams.
     zone_enabled = camera.role is not CameraRole.ENTRANCE
     zone_tracker = (
         ZoneTracker(
-            zone=camera.primary_zone.value,
+            zone=zone_value,
             min_zone_dwell_ms=settings.min_zone_dwell_ms,
             dwell_interval_ms=settings.zone_dwell_interval_ms,
             exit_grace_ms=settings.zone_exit_grace_ms,
@@ -80,8 +87,13 @@ def process_camera(
     # Billing-queue detection runs only on the CHECKOUT camera (CAM5); off its ZONE_ENTER/EXIT.
     billing = BillingTracker() if camera.role is CameraRole.CHECKOUT else None
     counts = {
-        "frames": 0, "entries": 0, "exits": 0, "zone": 0,
-        "reentry": 0, "off_floor": 0, "billing": 0,
+        "frames": 0,
+        "entries": 0,
+        "exits": 0,
+        "zone": 0,
+        "reentry": 0,
+        "off_floor": 0,
+        "billing": 0,
     }
     # Running appearance signature per track (sum of per-frame histograms) until resolved.
     sig_sums: dict[int, np.ndarray] = {}
@@ -149,7 +161,7 @@ def process_camera(
         queue_depth: int | None = None,
     ) -> None:
         res = registry.resolve(camera.camera_id, track_id, current_signature(track_id), ts_ms)
-        is_staff = staff.is_staff(camera.camera_id, track_id, dwell_ms)
+        is_staff = staff.is_staff(camera.camera_id, track_id, res.visitor_id, dwell_ms)
         if res.is_reentry:  # known visitor returning after an absence — flag before the main event
             write_event(
                 res.visitor_id, BehaviorEventType.REENTRY, ts_ms, confidence, None, 0, is_staff
@@ -170,14 +182,16 @@ def process_camera(
         if billing is None:  # only the checkout camera has billing
             return
         if ze.event_type is BehaviorEventType.ZONE_ENTER:
-            is_staff = staff.is_staff(camera.camera_id, ze.track_id, ze.dwell_ms)
+            # Internal billing gate only — visitor isn't resolved here, so use the heuristic
+            # (visitor_id=None). The emitted BILLING event below re-decides is_staff with the VLM.
+            is_staff = staff.is_staff(camera.camera_id, ze.track_id, None, ze.dwell_ms)
             for be in billing.join(ze.track_id, ze.ts_ms, ze.confidence, is_staff=is_staff):
                 emit(
                     be.track_id,
                     be.event_type,
                     be.ts_ms,
                     be.confidence,
-                    zone_id=camera.primary_zone.value,
+                    zone_id=zone_value,
                     dwell_ms=0,
                     queue_depth=be.queue_depth,
                 )
@@ -190,7 +204,7 @@ def process_camera(
         log.info(
             "camera_open",
             camera=camera.camera_id,
-            zone=camera.primary_zone.value,
+            zone=zone_value,
             fps=src.source_fps,
         )
         for frame in src.frames():
@@ -202,6 +216,9 @@ def process_camera(
                         counts["off_floor"] += 1  # reflection / wall display — not on the floor
                         continue
                 accumulate_signature(track.track_id, frame.image, track.bbox)
+                # Capture a representative crop for the VLM staff call (no-op without a VLM). Done
+                # outside accumulate_signature so a quickly-resolved track still gets a crop.
+                staff.observe_crop(camera.camera_id, track.track_id, frame.image, track.bbox)
                 if zone_tracker is not None:
                     for ze in zone_tracker.observe(track.track_id, frame.ts_ms, track.confidence):
                         emit_zone(ze)
@@ -237,9 +254,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     cctv_dir = Path(settings.cctv_dir)
     cameras = [c for c in STORE.cameras if c.is_customer_area]
     allow = {
-        c.strip().upper().replace(" ", "")
-        for c in settings.enabled_cameras.split(",")
-        if c.strip()
+        c.strip().upper().replace(" ", "") for c in settings.enabled_cameras.split(",") if c.strip()
     }
     if allow:  # optional filter (e.g. only the cameras a reviewer can ground-truth)
         cameras = [c for c in cameras if c.camera_id in allow]
@@ -267,15 +282,35 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         reentry_min_gap_ms=settings.reid_reentry_min_gap_ms,
     )
     registry = VisitorRegistry(gallery)
-    staff = StaffClassifier(
+    heuristic_staff = StaffClassifier(
         threshold=settings.staff_darkness_threshold,
         presence_fallback_ms=(
             settings.staff_min_presence_ms if settings.staff_presence_fallback else None
         ),
     )
+    # Optional VLM (ADR-0027). build_vlm_client returns None when disabled / no key / SDK absent,
+    # so the decider quietly uses the heuristic and `docker compose up` stays key/network-free.
+    vlm = build_vlm_client(settings, log)
+    vlm_cache = JsonFileCache(settings.vlm_cache_path) if vlm is not None else None
+    staff = StaffDecider(
+        heuristic_staff,
+        vlm,
+        vlm_cache,
+        STORE.store_id,
+        min_confidence=settings.vlm_staff_min_confidence,
+        classify_staff=settings.vlm_classify_staff,
+        log=log,
+    )
+    # Label product-camera zones from the shelves (VLM), falling back to the static primary_zone.
+    zone_overrides = resolve_zones(cameras, cctv_dir, vlm, vlm_cache, settings, STORE.store_id, log)
     totals = {
-        "frames": 0, "entries": 0, "exits": 0, "zone": 0,
-        "reentry": 0, "off_floor": 0, "billing": 0,
+        "frames": 0,
+        "entries": 0,
+        "exits": 0,
+        "zone": 0,
+        "reentry": 0,
+        "off_floor": 0,
+        "billing": 0,
     }
     emitted_visitors: set[str] = set()  # distinct GLOBAL visitors who produced an event
 
@@ -301,7 +336,16 @@ def run_once(settings: Settings, log) -> dict[str, int]:
                 log.warning("clip_missing", camera=camera.camera_id, path=str(clip_path))
                 continue
             counts = process_camera(
-                camera, clip_path, tracker, registry, staff, sink, settings, log, emitted_visitors
+                camera,
+                clip_path,
+                tracker,
+                registry,
+                staff,
+                sink,
+                settings,
+                log,
+                emitted_visitors,
+                zone_override=zone_overrides.get(camera.camera_id),
             )
             for key, value in counts.items():
                 totals[key] += value

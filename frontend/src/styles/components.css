@@ -88,6 +88,41 @@
   flex-wrap: wrap;
 }
 
+.switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.switcher__label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.switcher__select {
+  appearance: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.switcher__select:hover {
+  border-color: var(--primary);
+}
+
+.switcher__select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 .live {
   display: inline-flex;
   align-items: center;

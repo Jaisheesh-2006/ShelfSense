@@ -11,7 +11,7 @@ actionable* (the API + dashboard).
 ## Two-tier shape (clean seam: seeing vs serving)
 
 ```
- Raw CCTV clips (5 cams)
+ Raw CCTV clips (2 stores · ~4 role-named cams each)
       │  OpenCV samples ~5 fps
       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -39,7 +39,7 @@ reworked independently. The whole stack starts with one `docker compose up`.
 ## Components & responsibilities
 | Component | Responsibility | Key inputs → outputs |
 |-----------|----------------|----------------------|
-| **Detection pipeline** | Detect people, track them, assign a per-visit `visitor_id` (Re-ID), classify staff, map to zones/direction, compute dwell & queue, **emit behavioural events**. Owns all CV + sessionization. | CCTV clips → `events.jsonl` + POST to API |
+| **Detection pipeline** | Detect people, track them, assign a per-visit `visitor_id` (Re-ID), classify staff, map to zones/direction, compute dwell & queue, **emit behavioural events**. Owns all CV + sessionization. Optionally calls a **VLM (Gemini) offline** for staff + zone classification (ADR-0027) — off by default, heuristic fallback, gate-safe. | CCTV clips → `events.jsonl` + POST to API |
 | **Intelligence API** (FastAPI) | Ingest events (idempotent, deduped, partial-success), persist, and compute metrics/funnel/heatmap/anomalies on read. Health + observability. | events → JSON metrics |
 | **PostgreSQL** | Durable store for events + derived metrics; the query surface. | — |
 | **Dashboard** | Show ≥1 metric live as events flow (Part E). | API → screen |
@@ -56,13 +56,21 @@ Package `shelfsense_api` (renamed from `app` to un-collide with the detector's `
   (POS, loaded at startup by `pos_ingest.py`). The engine is built lazily so the app imports without a
   Postgres driver (hermetic SQLite TestClient tests). Retired the placeholder `/api/v1/*`.
 
-## Camera → role mapping (our 5 cams → spec's 3 roles)
-Entry = **CAM3** (calibrated footfall line — **footfall only, does not count visitors**: its view is
-dominated by mall-corridor pass-by; ADR-0011) · Main floor = **CAM1 + CAM2** · Billing = **CAM5** (with a
-calibrated **walkable-floor mask** so a wall mirror / backlit display can't be counted as people; ADR-0010)
-· Back room (staff, excluded; empty in-clip) = **CAM4**. **Unique visitors are counted from the
-shopping-floor cams (CAM1/CAM2/CAM5)**; cross-camera overlap is handled by Re-ID de-duplication so one
-shopper is counted once, and **staff are excluded by their black uniform** (ADR-0009).
+## Camera → role mapping (now explicit in the corrected dataset)
+The corrected dataset **names cameras by role** ([[GROUND_TRUTH]] §1), so the mapping is no longer inferred:
+
+- **Store_1** (= the old single store, ST1008): Entry = **CAM 3 - entry** (calibrated footfall line —
+  **footfall only, does not count visitors**: its view is dominated by mall-corridor pass-by; ADR-0011) ·
+  Main floor = **CAM 1 - zone + CAM 2 - zone** · Billing = **CAM 5 - billing** (with a calibrated
+  **walkable-floor mask** so a wall mirror / backlit display can't be counted as people; ADR-0010). The old
+  **CAM 4 stockroom is gone** from the dataset (it was staff-only and empty in-clip — no loss).
+  **Unique visitors are counted from the shopping-floor cams (CAM1/CAM2/CAM5)**; cross-camera overlap is
+  handled by Re-ID de-duplication so one shopper is counted once, and **staff are excluded by their black
+  uniform** (ADR-0009).
+- **Store_2** (NEW, not yet processed): cams **entry 1 / entry 2 / zone / billing_area** (two entrances).
+  Mapping the same roles is mechanical, but the pipeline currently runs **one store**; **multi-store
+  processing + per-store `store_id` tagging is pending** (ADR-0024, [[STATE]]). The API is already per-store
+  (`/stores/{id}/...`), so the serving tier needs no change for a second store.
 
 ## Data flow (one visitor)
 1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).

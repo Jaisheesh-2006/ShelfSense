@@ -87,24 +87,31 @@ def pos_day_metrics(
 ) -> dict:
     """Free day-level KPIs from the sales file (independent of the video window).
 
-    Returns transaction_count, total_gmv, avg_basket, top_department, and peak_hour (store-local).
+    Returns transaction_count, total_gmv, avg_basket, top_brand, top_department, and peak_hour
+    (store-local). `top_brand`/`top_department` are by basket count (the busiest, not the richest);
+    department is derived from the basket's dominant brand (departments.py, ADR-0025).
     """
     txns = list(transactions)
     count = len(txns)
     if count == 0:
         return {
             "transaction_count": 0, "total_gmv": 0.0, "avg_basket": 0.0,
-            "top_department": None, "peak_hour": None,
+            "top_brand": None, "top_department": None, "peak_hour": None,
         }
     total = round(sum(t.amount for t in txns), 2)
     local = ZoneInfo(store_tz)
     peak_hour = Counter(t.timestamp.astimezone(local).hour for t in txns).most_common(1)[0][0]
-    depts = Counter(t.department for t in txns if t.department)
+    brands = Counter(t.brand for t in txns if t.brand)
+    top_brand = brands.most_common(1)[0][0] if brands else None
+    # Department rollup excludes the catch-all "other" so a meaningful category wins (e.g. makeup),
+    # not the own-label/unmapped bucket; falls back to None only if every basket is "other".
+    depts = Counter(t.department for t in txns if t.department and t.department != "other")
     top_department = depts.most_common(1)[0][0] if depts else None
     return {
         "transaction_count": count,
         "total_gmv": total,
         "avg_basket": round(total / count, 2),
+        "top_brand": top_brand,
         "top_department": top_department,
         "peak_hour": peak_hour,  # store-local hour (0-23) with the most sales
     }

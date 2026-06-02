@@ -47,6 +47,14 @@ def test_healthz_ok(client) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_list_stores(client) -> None:
+    stores = client.get("/stores").json()
+    by_id = {s["store_id"]: s["name"] for s in stores}
+    assert by_id.get("ST1008") == "Brigade Bangalore"  # POS store
+    assert "ST1009" in by_id  # the corrected dataset's Store_2 (assigned id, ADR-0026)
+    assert all(s["store_id"] and s["name"] for s in stores)
+
+
 def test_ingest_then_metrics_and_funnel(client) -> None:
     resp = client.post("/events/ingest", json={"events": _batch()})
     assert resp.status_code == 200

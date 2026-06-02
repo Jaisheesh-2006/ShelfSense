@@ -1,16 +1,22 @@
 # SPEC — authoritative requirements (from the Problem Statement)
 
-> Digest of `docs/raw/Purplle Tech Challenge 2026 _ Round 2 Problem Statement….pdf`. This is the
-> **authoritative spec for WHAT to build** (schema, endpoints, scoring). Where this and earlier
-> assumptions disagree, **this wins**. Data facts live in [[GROUND_TRUTH]].
+> Digest of `docs/raw/Purplle_Tech_Challenge_PS3f02573.pdf`. This is the **authoritative spec for WHAT to
+> build** (schema, endpoints, scoring). Where this and earlier assumptions disagree, **this wins**. Data
+> facts live in [[GROUND_TRUTH]].
 >
-> ⚠️ **Dataset description is a print mistake.** The PDF §3 describes an "Apex Retail" dataset
-> (5 stores × 3 cams × 20 min, anonymised, with `store_layout.json` / `pos_transactions.csv` /
-> `sample_events.jsonl` / `assertions.py`). **Per the user, that is wrong** — the real, final data
-> is what's in `docs/raw/` (Brigade_Bangalore, 5 cameras, ~2-min clips, the detailed Purplle CSV).
-> We therefore: (a) build to the spec's **schema/endpoints/scoring**, (b) use the **Brigade data**,
-> (c) **define our own zone config** (no `store_layout.json`; we have a floor-plan PDF) and
-> **self-validate** (no `sample_events.jsonl` / `assertions.py`). `store_id = "ST1008"`.
+> ⚠️ **Corrected dataset (2026-06-02). The old "print mistake" theory is RETIRED — it was wrong.** The
+> earlier wiki claimed the PDF's "Apex Retail" dataset description was a print error and the single Brigade
+> store was final. The team has since delivered a **corrected dataset** ([[GROUND_TRUTH]] §0), confirming the
+> Apex framing is real. What's now true:
+> - **The PDF is authoritative as written.** Build to its schema/endpoints/scoring/edge-cases/North-Star.
+> - **Delivered data still differs from the PDF's *described* dataset**, but far less than before: **2 stores**
+>   (not 5), **4 cams each** (role-named), **~2-min clips** (not 20-min), **layout PNGs** (no `store_layout.json`),
+>   a **7-column POS sample** (not the documented `transaction_id`/`basket_value_inr` shape), **13 sample events**
+>   (not 200), and **no `assertions.py`**. So we still **self-derive zones** (from the PNGs) and **self-validate**.
+> - **`sample_events.jsonl` now EXISTS** and uses a **richer schema that conflicts with the PDF's page-5
+>   "Required Output Schema"** (the flat schema our code emits). This is an open decision — see
+>   "REQUIRED event schema" below, [[EVENT_SCHEMA]], and [[DECISIONS]] ADR-0024.
+> - **`store_id = "ST1008"`** in the POS (Store_1). Store_2 has no POS and no assigned store_id yet.
 
 ## North Star
 **Offline Store Conversion Rate = purchasers ÷ unique visitors** (per session window). Every
@@ -55,6 +61,15 @@ Flat behavioural events (one object per behaviour), not raw bbox detections:
 `ZONE_EXIT` · `ZONE_DWELL` (every 30s of continuous dwell) · `BILLING_QUEUE_JOIN` (set queue_depth) ·
 `BILLING_QUEUE_ABANDON` (left billing before a POS txn) · `REENTRY` (same visitor_id after an EXIT).
 
+> ⚠️ **Schema tension (open — ADR-0024).** The above is the PDF's page-5 *Required Output Schema* and the
+> gate example uses it — **our code emits exactly this**. But the delivered **`sample_events.jsonl`** uses a
+> **different, richer schema** (lowercase event types; `id_token`/`track_id` instead of `visitor_id`;
+> `event_timestamp`/`event_time` instead of `timestamp`; plus **demographics** `gender_pred`/`age_pred`/
+> `age_bucket`, **`is_face_hidden`**, **groups** `group_id`/`group_size`, **zone metadata** `zone_name`/
+> `zone_type`/`is_revenue_zone`/`zone_hotspot_x,y`, and **queue analytics** `queue_join_ts`/`served_ts`/
+> `exit_ts`/`wait_seconds`/`queue_position_at_join`/`abandoned`). Keep the flat schema, adopt the sample's,
+> or enrich ours toward it? **Pending discussion** — see [[EVENT_SCHEMA]], [[GROUND_TRUTH]] §5.
+
 ## REQUIRED API endpoints
 | Endpoint | Returns | Key requirements |
 |---|---|---|
@@ -68,8 +83,10 @@ Flat behavioural events (one object per behaviour), not raw bbox detections:
 ## POS correlation rule (conversion)
 No customer_id. Correlate by **time window + store**: a visitor present in the **billing zone in
 the 5-minute window before a transaction timestamp** counts as a **converted** visitor for that
-session. Conversion = converted visitors ÷ unique visitors. (Brigade CSV → `transaction_id`,
-`timestamp` from order_date+order_time, `basket_value` from order total; see [[GROUND_TRUTH]] §2.)
+session. Conversion = converted visitors ÷ unique visitors. (Delivered CSV is 7-col → a **transaction =
+distinct `order_time`** (24 of them), `timestamp` from `order_date`+`order_time` (local, no tz),
+`basket_value` from summing `total_amount` per timestamp; see [[GROUND_TRUTH]] §2. **Note:** the loader
+needs rework for this format.)
 
 ## The 7 edge cases (graded under Part A & C)
 Group entry (count individuals, not groups) · Staff movement (`is_staff`, exclude) · Re-entry

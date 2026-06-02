@@ -1,12 +1,19 @@
 # EVENT SCHEMA
 
-> The contract the detection layer **emits** and the API **ingests**. This is the prescribed
-> schema from [[SPEC]] — schema compliance is graded (Part A). Pydantic models are canonical;
-> this doc mirrors them for humans. Definitions of the behaviours live in [[BUSINESS_RULES]].
+> The contract the detection layer **emits** and the API **ingests**. This is the **PDF page-5
+> "Required Output Schema"** from [[SPEC]] — schema compliance is graded (Part A). Pydantic models are
+> canonical; this doc mirrors them for humans. Definitions of the behaviours live in [[BUSINESS_RULES]].
 >
 > **Note (ADR-0005):** this replaces the earlier internal `detection.created`/`track.updated`
 > envelope design. Low-level detector→tracker data may stay internal, but the **emitted/ingested
 > event is the flat behavioural schema below**.
+>
+> ✅ **DECISION (2026-06-02, user, ADR-0024 D1): keep this flat PDF page-5 schema — it is what the
+> pipeline "must emit".** The corrected dataset added a richer/inconsistent `sample_events.jsonl` (see "The
+> provided sample" below), but the PDF prints this flat object as the **Required Output Schema** and the
+> gate/`assertions` examples use it, so **we emit this and only this**. The sample's extra signals
+> (demographics, groups, zone metadata, queue analytics) are **not adopted** — documented as a deliberate
+> scope choice, not an oversight.
 
 ## Event object (flat)
 
@@ -53,6 +60,37 @@ survives short occlusion (within-camera tracking), is **deduplicated across over
 (CAM1/CAM2/CAM3, Slice 2.4), and a returning shopper produces `REENTRY` under the **same** `visitor_id` —
 never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the conversion denominator). See
 [[EDGE_CASES]], [[BUSINESS_RULES]].
+
+## The provided `sample_events.jsonl` (richer — the open decision)
+
+The corrected dataset ships 13 example events ([[GROUND_TRUTH]] §5) from a sample store (`store_1076`,
+Mumbai) "to help you validate your detection layer." Its schema **differs from the flat one above** and is
+**internally inconsistent** across event types. Three shapes:
+
+| Group | Key id fields | Time field | Extra fields beyond ours |
+|-------|---------------|-----------|--------------------------|
+| `entry` / `exit` (lowercase) | `id_token`, `store_code` | `event_timestamp` | **`gender_pred`, `age_pred`, `age_bucket`, `is_face_hidden`, `group_id`, `group_size`** |
+| `zone_entered` / `zone_exited` | `track_id`, `store_id` | `event_time` | **`zone_name`, `zone_type` (SHELF/DISPLAY/BILLING), `is_revenue_zone`, `zone_hotspot_x/y`**, `gender`, `age` |
+| `queue_completed` / `queue_abandoned` | `queue_event_id`, `track_id` | `queue_join_ts`/`served_ts`/`exit_ts` | **`wait_seconds`, `queue_position_at_join`, `abandoned`**, hotspot, demographics |
+
+**Conflicts with our schema:** lowercase vs UPPERCASE `event_type`; `id_token`/`track_id` vs `visitor_id`;
+`event_timestamp`/`event_time` vs `timestamp`; `store_code` vs `store_id`; no `event_id`/`confidence`/
+`dwell_ms`/`metadata` on several; queue modelled as one completed/abandoned record (with join/serve/exit
+timestamps) rather than our `BILLING_QUEUE_JOIN` + derived-`ABANDON` pair.
+
+**New signals it implies we don't yet produce:** demographics (gender/age/bucket), face-hidden flag,
+explicit groups (`group_id`/`group_size`), zone semantics (`zone_type`/`is_revenue_zone`), spatial
+hotspots, and richer queue analytics (wait time, queue position).
+
+**The decision (ADR-0024 D1) — ✅ RESOLVED: (a) keep the flat page-5 schema.**
+- (a) **Keep the flat page-5 schema** — it's what the PDF prints as "Required" and what the gate example
+  (`GET /stores/STORE_BLR_002/metrics`) and `assertions.py` style imply; lowest risk, already built.
+  **← chosen (user, 2026-06-02): "it's clearly given your pipeline must emit this, so follow page 5 only."**
+- (b) *Adopt the sample's schema* — rejected: messy/inconsistent and a large refactor across
+  contract/ingest/analytics/tests for no scoring gain.
+- (c) *Enrich ours toward it* — rejected for now: the extra signals (demographics, groups, zone metadata,
+  queue analytics) are optional and add risk (e.g. demographics from full-face-blurred footage). Revisit
+  only if a real need appears.
 
 ## Status
 Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in

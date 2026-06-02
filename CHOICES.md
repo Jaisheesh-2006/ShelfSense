@@ -179,3 +179,43 @@ live feed is connected — we lose nothing by being honest about a 2-minute samp
 **Trade-off / when we'd revisit.** Recording-relative health can hide a genuinely stopped live feed — hence
 the strict toggle for production. The conversion baseline is a config target until real multi-day history
 lets us compute a rolling 7-day average (then it's a one-line swap, same rule).
+
+## Decision 7 — VLM (Gemini) for staff + zone classification, offline and gate-safe
+
+**Context.** Staff exclusion drives the conversion denominator, and our staff rule was "dark uniform"
+(Decision 4) — correct for Store_1's black uniforms but **wrong for Store_2, whose staff wear pink**.
+Zones were likewise a hand-mapped label per camera, which doesn't scale to a new store's shelves. The
+Problem Statement explicitly invites *"LLMs/VLMs for zone classification, staff detection, or anything
+useful"* (the Part D / AI-engineering bucket).
+
+**Options considered.**
+- (a) Per-store colour rules (add a pink rule for Store_2) — quick, but brittle and re-tuned per store.
+- (b) Train a staff/zone classifier — no labels exist; over-engineered for ~7 people.
+- (c) Use a **VLM (Gemini Flash)** as an occasional judgment helper — once per person for staff, once
+  per product camera for zone — run **only in the offline detection pass**, cached, with the heuristic
+  as fallback.
+
+**What the AI suggested.** It recommended (c) but stressed the boundary: the VLM must never touch the
+`docker compose up` gate (no key/network at review time), output must compute from the real image
+(integrity), and verdicts must be cached + the events committed so the reviewer's run is deterministic.
+
+**Decision.** **(c).** A lazy-imported Gemini client (`detector/app/vlm.py`) classifies **staff vs
+customer per `visitor_id`** and **zone per product camera** (entrance/checkout/stockroom stay
+role-known), feeding only the existing `is_staff` / `zone_id` fields (schema unchanged). It is **off by
+default** (`VLM_ENABLED=false`); when on, ~18 calls cover both stores, all cached. Missing key/SDK,
+low confidence, or any error **falls back to the heuristic**.
+
+The prompts (documented, deterministic at temperature 0):
+- *Staff:* "…Decide whether this person is a STORE EMPLOYEE (staff) or a CUSTOMER… consider uniforms,
+  lanyards, aprons, standing behind a counter… reply JSON `{label, confidence, reason}`."
+- *Zone:* "…Identify the PRIMARY retail zone this camera covers from the shelves/products/signage…
+  choose one of `[skincare_aisle, makeup_aisle, foh_center, accessories]`… reply JSON `{zone,
+  confidence, reason}`."
+
+**Why.** One signal that generalises across stores (solves Store_2's pink staff) and auto-labels a new
+store's zones, while the gate stays a heuristic-only, network-free one-command run. We keep the
+heuristic as both fallback and a baseline to compare the VLM against.
+
+**Trade-off / when we'd revisit.** VLM replies are non-deterministic — mitigated by temperature 0 +
+caching + committed events. It adds `google-genai` to the detector image (lazy-used). If volume grew,
+we'd batch crops per call or distil the verdicts into a small local classifier.

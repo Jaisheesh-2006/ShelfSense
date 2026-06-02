@@ -27,6 +27,17 @@ from shelfsense_api.repository import fetch_events, fetch_transactions
 router = APIRouter(prefix="/stores", tags=["stores"])
 
 
+class StoreInfo(BaseModel):
+    store_id: str
+    name: str
+
+
+@router.get("", response_model=list[StoreInfo])
+def list_stores() -> list[StoreInfo]:
+    """The configured stores the dashboard can switch between (id + display name). Config-driven."""
+    return [StoreInfo(store_id=sid, name=name) for sid, name in get_settings().store_list]
+
+
 class FunnelStageOut(BaseModel):
     stage: str
     visitors: int
@@ -44,6 +55,7 @@ class PosMetrics(BaseModel):
     transaction_count: int
     total_gmv: float
     avg_basket: float
+    top_brand: str | None = None
     top_department: str | None = None
     peak_hour: int | None = None
 

@@ -7,6 +7,9 @@
 1. **Group entry** (2–4 together) → count **individuals, not groups** (3 enter ⇒ 3 `ENTRY`).
    ✅ *Handled by design:* counting is per-tracked-person (per `visitor_id`), never per blob — a group
    yields one track/visitor each. No grouping logic needed.
+   ⓘ *New (corrected dataset):* `sample_events.jsonl` carries explicit **`group_id` / `group_size`** on
+   entry/exit ([[EVENT_SCHEMA]]). We could *populate* those (group attribution) as an enrichment — pending
+   the schema decision (ADR-0024) — but counting individuals already satisfies the requirement.
 2. **Staff movement** → classify `is_staff=true` and **exclude from customer metrics**.
    ✅ *Slice 2.4b (ADR-0009):* Brigade staff wear a **complete black uniform**, so `is_staff` is set by a
    **dark-uniform appearance score** — min of upper/lower-body dark-pixel fraction, reusing the Re-ID crop

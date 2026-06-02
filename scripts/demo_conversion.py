@@ -42,7 +42,7 @@ EVENTS = REPO / "data" / "events" / "behavior.jsonl"
 
 
 def _find_csv(fallback: str) -> str:
-    hits = glob.glob(str(REPO / "docs" / "raw" / "Brigade_Bangalore_10_April_26*.csv"))
+    hits = sorted(glob.glob(str(REPO / "docs" / "raw" / "*.csv")))
     return hits[0] if hits else fallback
 
 
@@ -90,8 +90,8 @@ def main() -> None:
 
     m = pos_day_metrics(txns, s.store_timezone)
     print(f"real POS day-metrics       : {m['transaction_count']} sales | "
-          f"GMV Rs {m['total_gmv']:.0f} | avg basket Rs {m['avg_basket']:.0f} | "
-          f"peak {m['peak_hour']}:00 | top {m['top_department']}\n")
+          f"total Rs {m['total_gmv']:.0f} | avg basket Rs {m['avg_basket']:.0f} | "
+          f"peak {m['peak_hour']}:00 | top brand {m['top_brand']}\n")
 
     demo_on = s.pos_demo_alignment or os.environ.get("POS_DEMO_ALIGNMENT", "").lower() == "true"
     if not demo_on:

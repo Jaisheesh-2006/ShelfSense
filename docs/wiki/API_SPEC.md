@@ -14,6 +14,7 @@
 
 | Method | Path | Returns | Key requirements |
 |--------|------|---------|------------------|
+| GET | `/stores` | the configured stores `[{store_id, name}]` for the dashboard switcher | config-driven (`STORES` env); the UI polls only the selected store (ADR-0026) |
 | POST | `/events/ingest` | accept a batch of **≤500** events; validate, dedup, store | **idempotent by `event_id`** (safe to POST twice); **partial success** on malformed events; structured error response |
 | GET | `/stores/{id}/metrics` | unique visitors, **conversion rate**, avg dwell/zone, queue depth, abandonment rate | exclude staff; handle zero-purchase; real-time (not cached) |
 | GET | `/stores/{id}/funnel` | Entry → Zone Visit → Billing Queue → Purchase, with counts + drop-off % | **session is the unit**; re-entries don't double-count a visitor |

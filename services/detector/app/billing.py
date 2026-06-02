@@ -51,8 +51,11 @@ class BillingTracker:
         self._occupants.add(track_id)
         return [
             BillingEvent(
-                track_id, BehaviorEventType.BILLING_QUEUE_JOIN, ts_ms,
-                len(self._occupants), confidence,
+                track_id,
+                BehaviorEventType.BILLING_QUEUE_JOIN,
+                ts_ms,
+                len(self._occupants),
+                confidence,
             )
         ]
 

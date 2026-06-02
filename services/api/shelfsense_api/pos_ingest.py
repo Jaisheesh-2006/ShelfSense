@@ -21,9 +21,9 @@ log = get_logger("api")
 def resolve_pos_csv(configured: str) -> Path | None:
     """Find the POS CSV.
 
-    The real file carries a download suffix (``Brigade_Bangalore_10_April_26 (1)bc6219c.csv``), so
-    if the configured path is absent we fall back to a ``*.csv`` in its directory (preferring a
-    Brigade file) rather than trusting the exact name.
+    The real file carries a download suffix (e.g. ``POS - sample transactionsb1e826f.csv``), so if
+    the configured path is absent we fall back to a ``*.csv`` in its directory — preferring a file
+    whose name mentions ``pos``/``transaction`` — rather than trusting the exact name.
     """
     path = Path(configured)
     if path.is_file():
@@ -33,8 +33,10 @@ def resolve_pos_csv(configured: str) -> Path | None:
     if not search_dir.is_dir():
         return None
     candidates = sorted(search_dir.glob("*.csv"))
-    brigade = [c for c in candidates if c.name.lower().startswith("brigade")]
-    chosen = brigade or candidates
+    preferred = [
+        c for c in candidates if any(k in c.name.lower() for k in ("pos", "transaction"))
+    ]
+    chosen = preferred or candidates
     return chosen[0] if chosen else None
 
 

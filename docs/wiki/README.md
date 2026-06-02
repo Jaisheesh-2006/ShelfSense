@@ -40,11 +40,15 @@ Pipeline: `CCTV → detector (YOLO + ByteTrack + Re-ID) → behavioural events �
 
 0. **Build to [[SPEC]]** (authoritative): the **prescribed behavioural event schema** + 8 event types
    ([[EVENT_SCHEMA]]), the **6 API endpoints incl. `POST /events/ingest`** ([[API_SPEC]]), and **Re-ID is
-   REQUIRED** (`visitor_id`, `REENTRY`, cross-camera dedup — reversed PD-5; ADR-0005). PDF's *dataset*
-   description was a print mistake — `raw/` is the final data.
+   REQUIRED** (`visitor_id`, `REENTRY`, cross-camera dedup — reversed PD-5; ADR-0005).
+0a. **⚠ Dataset corrected (2026-06-02):** the old "print mistake" theory is **retired** — the PDF is real
+   as written. A **`sample_events.jsonl` now exists** whose schema is **richer than/conflicts with** the
+   PDF's page-5 schema we built — **open decision** ([[GROUND_TRUTH]] §0/§5, ADR-0024). See [[STATE]].
 1. **Headline metric (North Star):** conversion rate = `converted visitors ÷ unique visitors`,
    where "converted" = in the billing zone within 5 min before a POS transaction. See [[BUSINESS_RULES]].
-2. **Raw inputs:** **5 cameras**, each a **~2-min clip**; CSV is **24 transactions** over a **full day** (12:15–21:40). The **video window ≠ CSV window** — a core ambiguity to handle, not ignore. See [[GROUND_TRUTH]].
+2. **Raw inputs:** **2 stores** now — Store_1 (= the old Brigade store, 4 role-named cams, ~2-min, 1920×1080)
+   and **Store_2** (new, 4 cams, 960×1080). POS (Store_1 only, ST1008) = **24 transactions** over a **full
+   day** (12:15–21:40), ₹34,331.71. The **clip window ≠ POS window** — a core ambiguity to handle. See [[GROUND_TRUTH]].
 3. **Acceptance gate (fail any → rejected before scoring):** `docker compose up` works with **zero manual steps**; `/metrics` returns a valid response; pipeline emits **structured events**; **`DESIGN.md` + `CHOICES.md`** exist and are non-trivial; no crash. See [[GROUND_TRUTH]] §Eval.
 4. **Score weights (100):** Detection 30 · **API & Business Logic 35** · Production 20 · Thinking 15. Optimize for the API/business bucket and a runnable demo.
 5. **Integrity:** hardcoded or input-invariant outputs → **score capped at 50**. Everything must compute from real input.
@@ -75,8 +79,9 @@ Pipeline: `CCTV → detector (YOLO + ByteTrack + Re-ID) → behavioural events �
 
 ## Current state (snapshot — full detail in [[STATE]])
 
-🟢 **Phases 1 & 2 complete; Phase 3 (production polish) in progress.** The full stack builds and
-runs from one `docker compose up --build` — **six services** (api, detector, postgres, prometheus,
-grafana, frontend). The detector processes the customer cameras and auto-feeds the API, and every
-prescribed endpoint returns real, internally-consistent data (unique visitors 2, funnel 2→2→0→0,
-POS 24/₹44,920). The clean-machine acceptance-gate dry-run has passed. Next action lives in [[STATE]].
+🟢 **Phases 1 & 2 complete; Phase 3 (production polish) in progress** — **but a corrected dataset landed
+2026-06-02 and the system is being re-grounded** ([[GROUND_TRUTH]] §0, [[DECISIONS]] ADR-0024). The full
+stack builds and runs from one `docker compose up --build` — **six services** (api, detector, postgres,
+prometheus, grafana, frontend) — and every prescribed endpoint returned real, internally-consistent data
+on the **old** data (Store_1: unique 2, funnel 2→2→0→0). The clean-machine gate dry-run passed on the old
+data; with the new POS format and Store_2, the data path needs decisions first. Next action lives in [[STATE]].

@@ -68,11 +68,20 @@ services:
       <<: *app-env
       CCTV_DIR: /data/cctv
       API_BASE_URL: http://api:8000   # detector POSTs emitted events here (auto-feed, ADR-0015)
+      # Optional VLM (ADR-0027). Off unless set in the root .env. Defaults keep `docker compose up`
+      # key/network-free; flip VLM_ENABLED=true + set GEMINI_API_KEY for the offline pre-gen run.
+      VLM_ENABLED: ${VLM_ENABLED:-false}
+      VLM_PROVIDER: ${VLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VLM_MODEL: ${VLM_MODEL:-gemini-2.0-flash}
+      VLM_CACHE_PATH: /data/vlm/vlm_cache.json
     volumes:
       # CCTV clips are local-only (gitignored). Mounted read-only for detection.
       - "./docs/raw/CCTV Footage/CCTV Footage:/data/cctv:ro"
       # Emitted events also written here, so the JSONL is inspectable on the host.
       - "./data/events:/data/events"
+      # VLM verdict cache (ADR-0027) — persisted so re-runs are free and the cache can be committed.
+      - "./data/vlm:/data/vlm"
     depends_on:
       # Wait for the API to be healthy, then auto-POST events to /events/ingest (no manual replay).
       api:

@@ -99,13 +99,39 @@ class Settings(BaseSettings):
     staff_min_presence_ms: int = 90000  # presence-fallback threshold (used only if enabled above)
 
     # --- POS correlation / conversion (Slice 2.5) ---
-    pos_csv_path: str = "/data/pos/Brigade_Bangalore_10_April_26.csv"  # mounted sales CSV
+    # Mounted sales CSV. The real file carries a download suffix (e.g. "POS - sample transactions
+    # b1e826f.csv"); if this exact path is absent, pos_ingest.resolve_pos_csv globs the directory.
+    pos_csv_path: str = "/data/pos/pos_transactions.csv"
     store_timezone: str = "Asia/Kolkata"  # store-local tz for order_date+order_time -> UTC
     pos_correlation_window_ms: int = 300000  # 5-min billing-zone-before-transaction window
     conversion_low_sample_threshold: int = 20  # < N unique visitors => data_confidence "low"
     # Demo only: align a representative billing visitor to a real sale so the flip to "converted" is
     # visible. NEVER changes the honest clip number; honoured only by scripts/demo_conversion.py.
     pos_demo_alignment: bool = False
+
+    # --- Vision-Language Model (Slice 2.9, ADR-0027) ---
+    # An optional VLM (Google Gemini) used ONLY in the offline detection pass to (a) classify each
+    # tracked person as staff/customer and (b) label each camera's zone from the shelves it shows —
+    # replacing brittle per-store heuristics (dark-uniform staff, hand-mapped zones) with one signal
+    # that generalises across stores. OFF by default so `docker compose up` needs no key/network and
+    # runs the heuristics (acceptance-gate safe). Verdicts are cached + the events are committed, so
+    # the reviewer's run makes ZERO API calls. When enabled but the SDK/key is missing or a call
+    # fails, the pipeline logs and falls back to the heuristic — the VLM never breaks the gate.
+    vlm_enabled: bool = False  # master switch; True only for the offline pre-generation run
+    vlm_provider: str = "gemini"  # only "gemini" implemented today
+    gemini_api_key: str = ""  # SECRET — supplied via env/.env, never committed
+    vlm_model: str = "gemini-2.0-flash"  # any fast multimodal Gemini model; override via VLM_MODEL
+    vlm_classify_staff: bool = True  # use the VLM for staff/customer (else heuristic only)
+    vlm_classify_zone: bool = True  # use the VLM to label camera zones (else static primary_zone)
+    # Confidence floors: below these the VLM verdict is ignored and we keep the heuristic / static
+    # zone. Keeps a hesitant model from overriding a known-good default.
+    vlm_staff_min_confidence: float = 0.55
+    vlm_zone_min_confidence: float = 0.55
+    # Persistent verdict cache: re-runs reuse it, and it can be committed for repeatable replay.
+    vlm_cache_path: str = "/data/vlm/vlm_cache.json"
+    vlm_zone_frame_fraction: float = 0.4  # where in the clip to grab the representative zone frame
+    vlm_timeout_s: float = 30.0  # per-call timeout
+    vlm_max_retries: int = 2  # per-call retries before giving up and falling back
 
     # --- Anomalies (Slice 2.7) ---
     # Queue-spike severities (customers in the checkout zone, staff excluded).
@@ -131,6 +157,10 @@ class Settings(BaseSettings):
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Store registry the dashboard switcher lists ("id:name" pairs, comma-separated). ST1008 is the
+    # store the POS covers (Brigade); ST1009 is our assigned id for the corrected dataset's Store_2,
+    # which had no id of its own (ADR-0026). Override via STORES.
+    stores: str = "ST1008:Brigade Bangalore,ST1009:Store 2"
     # CORS: browser origins allowed to call the API (the React dashboard). Comma-separated; "*"
     # allows any — safe here since the API is read-only metrics. Override via CORS_ALLOW_ORIGINS.
     cors_allow_origins: str = "*"
@@ -141,6 +171,20 @@ class Settings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def store_list(self) -> list[tuple[str, str]]:
+        """Parse `stores` ("id:name,...") into (store_id, display_name) pairs for the switcher."""
+        out: list[tuple[str, str]] = []
+        for item in self.stores.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            sid, _, name = item.partition(":")
+            sid = sid.strip()
+            if sid:
+                out.append((sid, name.strip() or sid))
+        return out
 
     @property
     def clip_start_dt(self) -> datetime:

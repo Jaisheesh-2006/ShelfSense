@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from shelfsense_common.contracts import BehaviorEvent, EventMetadata, Transaction
+from shelfsense_common.departments import department_for
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -134,18 +135,17 @@ def latest_event_ms_by_store(session: Session) -> dict[str, int]:
 
 
 def upsert_transactions(session: Session, txns: Iterable[Transaction]) -> int:
-    """Idempotently upsert POS transactions by order id. Returns the number processed."""
+    """Idempotently upsert POS transactions by basket id. Returns the number processed."""
     count = 0
     for t in txns:
         row = session.get(TxnRow, t.transaction_id)
         if row is None:
             row = TxnRow(order_id=t.transaction_id)
             session.add(row)
-        row.invoice_number = t.invoice_number
         row.ts_ms = _ts_ms(t.timestamp)
         row.line_items = t.line_items
         row.gmv = t.amount
-        row.department = t.department
+        row.brand = t.brand
         count += 1
     session.commit()
     return count
@@ -157,10 +157,10 @@ def fetch_transactions(session: Session) -> list[Transaction]:
     return [
         Transaction(
             transaction_id=r.order_id,
-            invoice_number=r.invoice_number,
             timestamp=datetime.fromtimestamp(r.ts_ms / 1000, tz=UTC),
             amount=r.gmv,
-            department=r.department,
+            brand=r.brand,
+            department=department_for(r.brand),
             line_items=r.line_items or 1,
         )
         for r in rows

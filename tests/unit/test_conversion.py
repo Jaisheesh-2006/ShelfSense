@@ -25,8 +25,16 @@ from shelfsense_common.conversion import (
 T0 = datetime(2026, 4, 10, 14, 0, 0, tzinfo=UTC)
 
 
-def _txn(tid: str, at: datetime, amount: float = 100.0, dept: str = "makeup") -> Transaction:
-    return Transaction(transaction_id=tid, timestamp=at, amount=amount, department=dept)
+def _txn(tid: str, at: datetime, amount: float = 100.0, brand: str = "Faces Canada") -> Transaction:
+    from shelfsense_common.departments import department_for
+
+    return Transaction(
+        transaction_id=tid,
+        timestamp=at,
+        amount=amount,
+        brand=brand,
+        department=department_for(brand),
+    )
 
 
 def test_match_at_window_edge_and_miss_just_past():
@@ -73,15 +81,16 @@ def test_no_unique_visitors_does_not_divide_by_zero():
 
 def test_pos_day_metrics():
     txns = [
-        _txn("o1", T0, amount=100.0, dept="makeup"),
-        _txn("o2", T0 + timedelta(hours=1), amount=300.0, dept="skin"),
-        _txn("o3", T0 + timedelta(hours=1), amount=200.0, dept="makeup"),
+        _txn("o1", T0, amount=100.0, brand="Faces Canada"),
+        _txn("o2", T0 + timedelta(hours=1), amount=300.0, brand="Good Vibes"),
+        _txn("o3", T0 + timedelta(hours=1), amount=200.0, brand="Faces Canada"),
     ]
     m = pos_day_metrics(txns)
     assert m["transaction_count"] == 3
     assert m["total_gmv"] == 600.0
     assert m["avg_basket"] == 200.0
-    assert m["top_department"] == "makeup"  # 2 of 3 orders
+    assert m["top_brand"] == "Faces Canada"  # 2 of 3 baskets
+    assert m["top_department"] == "makeup"  # Faces Canada (makeup) x2 beats Good Vibes (bath&body)
 
 
 def test_pos_day_metrics_empty():
