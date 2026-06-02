@@ -1,0 +1,65 @@
+/* ShelfSense UI — design tokens.
+   A small, flat, token-based system. No gradients. White-forward surfaces, one calm blue accent,
+   one teal secondary, and soft semantic tints. Everything else derives from these variables. */
+
+:root {
+  /* Surfaces & lines */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --border: #e7e9ee;
+  --border-strong: #d7dbe2;
+
+  /* Text */
+  --text: #1d2530;
+  --text-muted: #687283;
+  --text-faint: #99a2b0;
+
+  /* Brand accent (single, solid — no gradient) */
+  --primary: #2563eb;
+  --primary-strong: #1d4ed8;
+  --primary-soft: #ecf1fe;
+
+  /* Secondary accent (heatmap / dwell) */
+  --teal: #0e9aa7;
+  --teal-soft: #e4f4f5;
+
+  /* Semantic */
+  --success: #1a9e57;
+  --success-soft: #e8f6ee;
+  --warning: #c4770e;
+  --warning-soft: #fbf2e2;
+  --danger: #d6453f;
+  --danger-soft: #fbecec;
+  --info: #5b6675;
+  --info-soft: #eef0f4;
+
+  /* Typography */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial,
+    sans-serif;
+  --fs-display: 34px;
+  --fs-xl: 24px;
+  --fs-lg: 18px;
+  --fs-md: 15px;
+  --fs-sm: 13px;
+  --fs-xs: 11px;
+
+  /* Radii */
+  --r-lg: 12px;
+  --r-md: 8px;
+  --r-sm: 6px;
+  --r-pill: 999px;
+
+  /* Elevation (single, subtle level — no heavy shadows) */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+
+  /* Spacing scale (4px base) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+}
