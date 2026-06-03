@@ -230,7 +230,7 @@ def _vlm_settings(**over):
         "vlm_enabled": True,
         "vlm_provider": "gemini",
         "gemini_api_key": "k",
-        "vlm_model": "gemini-2.0-flash",
+        "vlm_model": "gemini-2.5-flash-lite",
         "vlm_timeout_s": 30.0,
         "vlm_max_retries": 2,
     }

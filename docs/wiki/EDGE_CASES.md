@@ -11,13 +11,16 @@
    entry/exit ([[EVENT_SCHEMA]]). We could *populate* those (group attribution) as an enrichment — pending
    the schema decision (ADR-0024) — but counting individuals already satisfies the requirement.
 2. **Staff movement** → classify `is_staff=true` and **exclude from customer metrics**.
-   ✅ *Slice 2.4b (ADR-0009):* Brigade staff wear a **complete black uniform**, so `is_staff` is set by a
-   **dark-uniform appearance score** — min of upper/lower-body dark-pixel fraction, reusing the Re-ID crop
-   (`detector/app/staff.py`). Calibrated vs ground truth (5 staff / 2 customers): customers score 0.08–0.19,
-   staff 0.52–0.96. CAM4 back room excluded at source (and empty in-clip). The API treats a visitor as staff
-   if **any** of their events is flagged. The old 90 s **presence heuristic** is demoted to an off-by-default
-   fallback. *Limit:* a genuinely black-clad customer would be misflagged (ours are grey/violet); on bright
-   shelf backgrounds darkness dilutes — one reason the entrance camera counts footfall, not visitors (ADR-0011).
+   ✅ *(ADR-0009/0032):* `is_staff` from a **per-store uniform-colour score** — a `COLOR_HEURISTICS`
+   registry in `detector/app/staff.py` (Store_1 = **black**, both upper+lower body; Store_2 = **pink**,
+   upper body), reusing the Re-ID crop; staff when the mean score ≥ `staff_uniform_threshold`. When
+   `VLM_ENABLED=true` an optional **VLM (Gemini/Groq)** overrides it when confident, with a per-store
+   `staff_uniform_hint` (ADR-0027/0031). Store_1 calibration (5 staff / 2 customers): customers 0.08–0.19,
+   staff 0.52–0.96. CAM4 back room excluded at source (and empty in-clip). The API treats a visitor as
+   staff if **any** event is flagged; the old 90 s presence heuristic is an off-by-default fallback.
+   *Limit:* on steep overhead CCTV the split is hard regardless (uniforms/lanyards not visible), so a
+   same-colour customer can be misflagged and the VLM verdict is crop-sensitive — the **total head-count
+   is the more reliable output** ([[GROUND_TRUTH]] §1).
 3. **Re-entry** → same person returning produces `REENTRY` under the **same `visitor_id`**, not a
    new `ENTRY`. ✅ *Slice 2.4:* the Re-ID gallery re-matches a returning visitor; a re-match after an
    absence gap emits `REENTRY`. (Rare on these "already inside" clips, like `ENTRY` — honest.)

@@ -8,10 +8,10 @@ WORKDIR /app
 
 # Install the shared library first (changes least often → better layer caching).
 COPY services/common /tmp/common
-RUN pip install --no-cache-dir /tmp/common
+RUN --mount=type=cache,target=/root/.cache/pip pip install /tmp/common
 
 COPY services/api/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY services/api/shelfsense_api ./shelfsense_api
 

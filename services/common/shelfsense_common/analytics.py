@@ -214,8 +214,8 @@ def compute_store_metrics(
     )
 
     # Queue depth is a customer metric, so exclude staff (any-flag) to stay consistent with the
-    # billing funnel stage — a track that dips below the staff-darkness threshold on its JOIN event
-    # but is staff overall must not inflate the observed queue.
+    # billing funnel stage — a track that dips below the staff uniform-colour threshold on its JOIN
+    # event but is staff overall must not inflate the observed queue.
     depths = [
         e.metadata.queue_depth
         for e in events

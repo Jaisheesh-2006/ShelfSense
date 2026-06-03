@@ -21,8 +21,8 @@ didn't match the problem-statement PDF, no `sample_events.jsonl`, etc.). The tea
 - There are **two stores now** (Store_1, Store_2), not one. **Store_1 is the same physical store as the
   old data** (identical clip durations); **Store_2 is brand new**.
 - The **POS file is a different, simpler format** (7 columns) and a different money total.
-- `store_layout.json` and `assertions.py` are named by the PDF but **still not provided** — we continue
-  to self-derive zones (from the layout images) and self-validate.
+- `store_layout.json` and `assertions.py` are named by the PDF but **not provided as code/JSON** — we
+  derive zones from the **layout PNGs** (provided for both stores) and self-validate with 138 unit tests.
 
 ## What is in `docs/raw/` (current)
 
@@ -68,10 +68,11 @@ set: **two entry cameras** plus a floor and a billing view.
 - **Time-synchronized (Store_1):** burnt-in timestamps ~**20:10–20:11 on 10/04/2026** (matches the POS
   date), watermark "CP IP Cam" — a concurrent evening window. (Store_2 sync window not yet read frame-by-frame.)
 - **People in Store_1 (carried from the prior verified ground truth — same clips):** across the cameras
-  there are **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. Staff dark-uniform is
-  the staff signal ([[DECISIONS]] ADR-0009); CAM 5 has a **mirror / backlit display** that double-detects
-  (handled by a walkable-floor mask, ADR-0010); the entrance view is dominated by **mall-corridor pass-by**,
-  filtered now by the entrance line + quality gate (ADR-0029).
+  there are **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. Staff signal =
+  the per-store uniform-colour heuristic (`black` here) and/or the VLM ([[DECISIONS]] ADR-0009/0032);
+  CAM 5 has a **mirror / backlit display** that double-detects (handled by a walkable-floor mask, ADR-0010);
+  the entrance view is dominated by **mall-corridor pass-by**, filtered by the entrance line + quality
+  gate (ADR-0029). Store_2 staff instead wear **bright pink** (`staff_heuristic_color="pink"`).
 - **People in Store_2 (user-provided ground truth, watching the footage — authoritative):**
   **22 unique customers + 3 staff** across the store (Re-ID-deduped headline). Per-camera observations
   (flows, not unique counts):
@@ -84,8 +85,9 @@ set: **two entry cameras** plus a floor and a billing view.
   Headline to validate the pipeline against: **22 customers, 3 staff (25 people total)** — a *busy* store
   vs Store_1's 2 customers, which stresses Re-ID de-duplication. Store_2 has **no POS** (no conversion).
   - **Pipeline result (ADR-0030/0031):** with calibrated entrance lines + per-store tuning
-    (`reid_max_distance=0.30`, `dwell=800ms`) the detector reaches **23 unique people** (≈25; per-camera
-    BILLING=6/ENTRY1=5/ENTRY2=8/ZONE=7, consistent with the flows). The ~8% undercount is weak
+    (`reid_max_distance=0.35`, `dwell=800ms`, global `imgsz=768`) the detector reaches **~23 unique
+    people** (≈25; per-camera BILLING=6/ENTRY1=5/ENTRY2=8/ZONE=7, consistent with the flows). Exact
+    counts are run-config-dependent; treat ~23/25 as the headline. The ~8% undercount is weak
     colour-histogram Re-ID on a dense crowd. **Staff via VLM (Llama-4 Scout on Groq): 4 staff / 19
     customers** (vs 3/22) — 23 VLM calls, 0 failures (Groq's free tier cleared what Gemini's 20/day
     couldn't). The VLM also relabelled the zone cam `makeup_aisle → skincare_aisle`. Proof images:
@@ -126,9 +128,9 @@ Purplle export):
   `order_time` (local, no tz) + `total_amount`. So three POS shapes have existed; **build to the real CSV.**
 - **Why it matters:** conversion **numerator source**. `transactions = count(distinct order_time)`.
   Conversion correlates a billing-zone visitor to a transaction by the **time-window + store** rule (§5).
-- **⚠ Code impact:** `pos_loader.py` parses the **old** format (GMV column, `order_id` grouping, `dep_name`,
-  IST `order_date+order_time`) → it **will break / mis-read** on this file. Rework is a pending decision
-  ([[RISKS]], [[TASKS]]).
+- **✅ Code updated:** `pos_loader.py` has been reworked for the 7-col CSV (basket = distinct
+  `order_time`, value = Σ `total_amount`; ADR-0024/D3). The `department` field is derived from
+  `brand_name` via a curated taxonomy in `departments.py` (ADR-0025).
 
 ### ⚠️ The window-mismatch fact (still true)
 Clips are **~2 minutes**; the CSV covers a **full ~9.5-hour day**. They are **not the same window**, so
@@ -178,9 +180,10 @@ These are the **canonical zone source** — we use the store's real zones, not h
   top-right**, perimeter **wall units (1–13)**, two angled centre gondolas, a **central cash counter**, and
   an **F.O.H** makeup area on the right. More zones than Store_1.
 
-**Canonical zones (v1, Store_1):** `entrance` (CAM 3, footfall only) · `skincare_aisle` (CAM 1) ·
-`makeup_aisle` (CAM 2) · `foh_center` · `checkout` + `accessories` (CAM 5). Store_2 zones are **not yet
-mapped**.
+**Canonical zones (v1, Store_1):** `entrance` (CAM 3) · `skincare_aisle` (CAM 1) ·
+`makeup_aisle` (CAM 2) · `foh_center` · `checkout` + `accessories` (CAM 5). **Store_2 zones:** defaults
+assigned by camera role, with the VLM (ADR-0027) auto-relabelling from visible shelves/signage when
+enabled (e.g., `makeup_aisle → skincare_aisle` for the zone cam).
 
 ## §5. New problem statement PDF + `sample_events.jsonl` (the schema tension)
 
@@ -215,10 +218,11 @@ design decision — see [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0024.
 ## What this implies for us (carried into the rest of the wiki)
 
 - Our emitted schema already matches the PDF's **page-5 Required Output Schema** — the authoritative,
-  gate-referenced one. The richer `sample_events.jsonl` is the main new thing to decide on.
-- **Two stores**: the API is per-store already; the **detection pipeline currently processes one store**
-  (Store_1) — running Store_2 and tagging events with the right `store_id` is pending.
-- **POS loader must be reworked** for the new 7-col CSV before conversion KPIs are real again.
+  gate-referenced one. The richer `sample_events.jsonl` is informational; we kept the flat schema (ADR-0024/D1).
+- **Two stores processed**: the API is per-store; the **detection pipeline processes both stores**
+  (Store_1 ST1008 + Store_2 ST1009) via a pluggable store registry (ADR-0028).
+- **POS loader reworked** for the new 7-col CSV — conversion KPIs are live for ST1008; ST1009 has no POS
+  (→ conversion N/A). Transactions are filtered per-store in the repository layer.
 - The big scored bucket is still **API & Business Logic (35)**; integrity cap still applies (compute from
   input). Ship a **one-command, non-crashing, observable** demo with strong DESIGN.md + CHOICES.md.
 - Document the window mismatch and the schema tension prominently — they are exactly the "real-world

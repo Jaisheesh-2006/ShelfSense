@@ -26,7 +26,10 @@ STORE_CONFIG = StoreConfig(
     store_id="ST1009",
     store_name="Store_2",
     clips_dir="Store_2/Store 2",
-    # Store_2 clips are on 10-Apr-2026 ~20:00 (deduced from the overlay).
+    # Synthetic single-day start. The two entry clips were recorded on DIFFERENT real days (entry 1:
+    # 29-Mar, entry 2: 08-Mar; see docstring / DESIGN A14) — per the user's direction we collapse
+    # them onto ONE day for a single coherent timeline. Time-of-day (~20:00 IST) is read from the
+    # burnt-in overlay; the date is the project's reference day (10-Apr-2026), not a real clip date.
     clip_start_iso="2026-04-10T20:00:00+05:30",
     staff_uniform_hint=(
         "CRITICAL STAFF INDICATOR: Store staff exclusively "
@@ -39,8 +42,10 @@ STORE_CONFIG = StoreConfig(
     staff_heuristic_color="pink",
     # Crowd tuning (ADR-0030): Store_2 is BUSY (~22 customers vs Store_1's 2), so it needs a
     # stricter Re-ID distance (less over-merging) and a shorter dwell than the global defaults.
-    # Calibrated to the ground truth (22+3): a sweep gave 0.55->6, 0.35->20, 0.30->23, 0.25->37
-    # unique; 0.30 + 800ms lands at ~23 (~25). Store_1 keeps the global 0.55/2000 (its own truth).
+    # Calibrated to the ground truth (22+3): a sweep at imgsz 480 gave 0.55->6, 0.35->20, 0.30->23,
+    # 0.25->37 unique. Final baked value = 0.35 + 800ms, which with the accuracy-raised global
+    # detector (imgsz 768) reaches ~23 vs 25 GT — 0.30 over-splits, 0.55 over-merges. Store_1 keeps
+    # the global 0.55/2000 (its own 2-customer truth). Exact counts are run-config-dependent.
     reid_max_distance=0.35,
     min_zone_dwell_ms=800,
     cameras=[

@@ -9,9 +9,11 @@ metrics (`/stores/{id}/metrics`, `/funnel`) computed live from stored events, pl
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,12 +68,36 @@ app.add_middleware(
 @app.middleware("http")
 async def observe_requests(request: Request, call_next: Callable[[Request], Awaitable[Response]]):
     start = time.perf_counter()
-    response = await call_next(request)
-    # Use the route template (not the raw path) to keep metric cardinality bounded.
-    route = request.scope.get("route")
-    path = getattr(route, "path", request.url.path)
-    HTTP_LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
-    HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
+    trace_id = request.headers.get("X-Trace-Id", str(uuid.uuid4()))
+    
+    # Bind trace_id to all logs in this request context
+    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as exc:
+        status_code = 500
+        # Will be caught and formatted gracefully by the unhandled_exception_handler
+        raise exc
+    finally:
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        
+        # Log the structured request completed event
+        if path not in ("/metrics", "/healthz", "/readyz"):
+            log.info(
+                "request_completed",
+                endpoint=path,
+                method=request.method,
+                latency_ms=latency_ms,
+                status_code=status_code,
+            )
+
+        HTTP_LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
+        HTTP_REQUESTS.labels(request.method, path, str(status_code)).inc()
+
     return response
 
 

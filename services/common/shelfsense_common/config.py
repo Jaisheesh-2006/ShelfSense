@@ -52,11 +52,6 @@ class Settings(BaseSettings):
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
     detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
-    # Mode: "replay" reads the pre-generated JSONL and POSTs to the API
-    # (fast, no YOLO/clips needed). "detect" runs the full YOLO pipeline
-    # over CCTV clips. Default is replay so `docker compose up` works
-    # instantly with no model weights, clips, or VLM keys.
-    detector_mode: str = "replay"  # "replay" or "detect"
 
     # --- Tracking / behavioural events (Slice 2.2) ---
     # Frames sampled per second of video for tracking. Lowered 10->5 (ADR-0019) to roughly halve the
@@ -102,11 +97,13 @@ class Settings(BaseSettings):
     # 0.55 collapses 44 fragmented tracks to ~7 unique. Clip-tuned + approximate (see DESIGN A5).
     reid_max_distance: float = 0.55
     reid_reentry_min_gap_ms: int = 5000  # absence before a re-matched visitor counts as REENTRY
-    # Staff classification (Slice 2.4b, ADR-0009): Brigade staff wear a complete BLACK uniform; the
-    # two real customers wear grey/violet. Primary signal = dark-uniform appearance. A track is
-    # staff if its mean dark-uniform score (min of upper/lower body dark fraction) >= threshold.
-    staff_darkness_threshold: float = 0.50  # calibrated vs ground truth (5 staff / 2 customers)
-    staff_dark_v_max: int = 70  # HSV Value (0-255) at/below which a pixel is "dark"/near-black
+    # Staff classification (Slice 2.4b, ADR-0009/0032/0027): the PRIMARY signal is the optional VLM
+    # (staff/customer per person, see below); the always-available FALLBACK is a per-store
+    # uniform-COLOUR match (StoreConfig.staff_heuristic_color — black=Store_1, pink=Store_2).
+    # A track is staff if its mean uniform-colour score (per the store's COLOR_HEURISTICS entry) >=
+    # threshold. The colour is a parameter, not hardcoded to "dark".
+    staff_uniform_threshold: float = 0.50  # calibrated vs ground truth (Store_1: 5 staff/2 cust.)
+    staff_uniform_v_max: int = 70  # HSV Value (0-255) ceiling for the "black" near-black test
     # Optional fallback: also flag very-long-present tracks even if not dark (off by default — on a
     # 2-min clip a browsing customer can dwell long too, and we only have two customers to protect).
     staff_presence_fallback: bool = False
@@ -123,22 +120,23 @@ class Settings(BaseSettings):
     # visible. NEVER changes the honest clip number; honoured only by scripts/demo_conversion.py.
     pos_demo_alignment: bool = False
 
-    # --- Vision-Language Model (Slice 2.9, ADR-0027) ---
-    # An optional VLM (Google Gemini) used ONLY in the offline detection pass to (a) classify each
-    # tracked person as staff/customer and (b) label each camera's zone from the shelves it shows —
-    # replacing brittle per-store heuristics (dark-uniform staff, hand-mapped zones) with one signal
-    # that generalises across stores. OFF by default so `docker compose up` needs no key/network and
-    # runs the heuristics (acceptance-gate safe). Verdicts are cached + the events are committed, so
-    # the reviewer's run makes ZERO API calls. When enabled but the SDK/key is missing or a call
-    # fails, the pipeline logs and falls back to the heuristic — the VLM never breaks the gate.
+    # --- Vision-Language Model (Slice 2.9, ADR-0027/0031) ---
+    # An optional, pluggable multimodal VLM used ONLY in the offline detection pass to (a) classify
+    # each tracked person as staff/customer and (b) label each camera's zone from the shelves it
+    # shows — replacing brittle per-store heuristics (uniform-colour staff, hand-mapped zones) with
+    # one signal that generalises across stores. Multi-provider (ADR-0031): the DEFAULT is Groq
+    # (multimodal Llama-4 Scout — what we ran); Gemini also supported (set VLM_PROVIDER).
+    # OFF by default so `docker compose up` needs no key/network and runs the heuristics
+    # (acceptance-gate safe). Verdicts are cached + the events are committed, so the reviewer's run
+    # makes ZERO API calls. When enabled but the SDK/key is missing or a call fails, the pipeline
+    # logs and falls back to the heuristic — the VLM never breaks the gate.
     vlm_enabled: bool = False  # master switch; True only for the offline pre-generation run
-    vlm_provider: str = "gemini"  # "gemini" or "groq" (Groq hosts multimodal Llama-4, etc.)
-    gemini_api_key: str = ""  # SECRET — supplied via env/.env, never committed
-    groq_api_key: str = ""  # SECRET — used when vlm_provider="groq"; never committed
-    # Fast multimodal Gemini model. Default to *-flash-lite (broad free-tier access); 2.0-flash had
-    # a 0-quota free tier on the test key. Override via VLM_MODEL; list models with models.list() on
-    # 404/429. NOTE: free tier is only ~20 requests/day — a busy store needs billing or batching.
-    vlm_model: str = "gemini-2.5-flash-lite"
+    vlm_provider: str = "groq"  # "groq" (default, multimodal Llama-4) or "gemini"
+    gemini_api_key: str = ""  # SECRET — used when vlm_provider="gemini"; never committed
+    groq_api_key: str = ""  # SECRET — used when vlm_provider="groq" (default); never committed
+    # Model id for the chosen provider. Default = Groq's multimodal Llama-4 Scout (what we ran; its
+    # free tier is far more generous than Gemini's). For Gemini set e.g. "gemini-2.5-flash-lite".
+    vlm_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     vlm_classify_staff: bool = True  # use the VLM for staff/customer (else heuristic only)
     vlm_classify_zone: bool = True  # use the VLM to label camera zones (else static primary_zone)
     # Confidence floors: below these the VLM verdict is ignored and we keep the heuristic / static

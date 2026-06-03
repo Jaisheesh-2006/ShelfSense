@@ -95,9 +95,10 @@ hotspots, and richer queue analytics (wait time, queue position).
 ## Status
 Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
 `shelfsense_common/contracts/behavior.py`. Emitted from real footage to JSONL by the detector:
-`ENTRY`/`EXIT` on the CAM3 door (2.2, footfall-only since 2.4b/ADR-0011); `ZONE_ENTER`/`DWELL`/`EXIT`
-on the shopping-floor cameras (2.3); `REENTRY` + `is_staff` (dark-uniform, ADR-0009) + **cross-camera
-de-duplicated** `visitor_id` via appearance Re-ID (2.4, ADR-0008); **`BILLING_QUEUE_JOIN` with
+`ENTRY`/`EXIT` on the entrance door; `ZONE_ENTER`/`DWELL`/`EXIT` on **all** customer cameras (entrance
+contributes interior visitors too since ADR-0029); `REENTRY` + `is_staff` (per-store uniform colour /
+optional VLM, ADR-0009/0032/0027) + **cross-camera de-duplicated** `visitor_id` via appearance Re-ID
+(2.4, ADR-0008); **`BILLING_QUEUE_JOIN` with
 `queue_depth`** on CAM5 (2.5, ADR-0012; `BILLING_QUEUE_ABANDON` derived in conversion). Validators
 enforce a tz-aware UTC timestamp and `zone_id=None` for ENTRY/EXIT.
 

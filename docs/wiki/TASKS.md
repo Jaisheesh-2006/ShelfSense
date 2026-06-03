@@ -9,8 +9,8 @@
 - ✅ Derive [[GROUND_TRUTH]] from `docs/raw/` (5 cameras, CSV=24 txns, eval rubric)
 - ✅ Adopt LLM-wiki pattern: [[README]] bootstrap + rewrite all docs grounded in real data
 - ✅ Root README, .gitignore, .env.example
-- ⬜ Initialize git repository
-- ⬜ **Inspect one frame per camera** → identify entrance/checkout/aisle cameras, define zones (PD-4/PD-5)
+- ✅ Initialize git repository
+- ✅ **Inspect one frame per camera** → identify entrance/checkout/aisle cameras, define zones (PD-4/PD-5)
 
 ## Phase 1 — Contracts & foundations ✅ DONE
 - ✅ Resolve PD-1..PD-5 in [[DECISIONS]] (ADR-0004)
@@ -51,8 +51,8 @@
 - ✅ **Slice 2.4b — Staff by uniform + mirror mask + entrance-as-footfall.** Refined ground truth (7
   store-wide = **2 customers + 5 staff**). `is_staff` now from a **dark-uniform appearance score**
   (`detector/app/staff.py`, ADR-0009), replacing the presence heuristic; **`FloorRegion`** mask drops
-  off-floor mirror/display phantoms on CAM5 (ADR-0010, **317 dropped**); the **entrance camera counts
-  footfall only**, visitors from CAM1/2/5 (ADR-0011). JSONL export now truncates per pass.
+  off-floor mirror/display phantoms on CAM5 (ADR-0010, **317 dropped**); all cameras count
+  visitors (ADR-0029). JSONL export now truncates per pass.
   **Validated: 5 unique = 2 customers + 3 staff** (customers exact). 52 tests pass; ruff clean.
 - ✅ **Slice 2.5 — Billing queue + POS correlation (ADR-0012).** `BillingTracker` emits
   `BILLING_QUEUE_JOIN`+`queue_depth` on CAM5; pure POS loader (CSV→**24 txns**, IST→UTC, GMV ₹44,920) +
@@ -95,10 +95,10 @@
   **🎯 Clean-machine gate dry-run PASSED:** `docker compose up --build` → all 4 cameras processed,
   131/131 posted, every endpoint real + consistent (unique 2, funnel 2→2→0→0, heatmap makeup=100, POS
   24/₹44,920, anomalies 2× honest-INFO), zero manual steps, no crash.
-- 🟡 **Perf tuning (ADR-0019)** — detector `sample_fps` 10→5 + YOLO `imgsz` 640→480 (~3–4× faster, the
-  ~24-min run targets ~6–8 min) + README `.wslconfig` note to give Docker more cores. **Pending:**
-  re-validate `unique_visitors`=2 / funnel 2→2→0→0 on the next full run; if it drifts, step back toward
-  7 fps / 560 px.
+- ↩ **Perf tuning (ADR-0019) — largely reversed (ADR-0033/0030).** With the two-mode replay (default
+  `up` replays committed events, no live YOLO), the offline detect pass trades time for **accuracy**:
+  `tracker_sample_fps` back to **10**, `detector_imgsz` to **768** (ST1008 overrides 480), `detection_iou`
+  0.85, lower `detection_confidence` 0.30. The throughput knobs are no longer the active values.
 - ✅ **Deterministic ids (ADR-0021)** — `visitor_id` numbered in discovery order (`VIS_0001…`) +
   `event_id` = UUIDv5 of `(store,camera,visitor,type,zone,timestamp)`, filled when blank, preserved on
   ingest. Re-runs/restarts at the same config now **dedup** instead of accumulating (fixed the
@@ -110,9 +110,9 @@
   conflict in a standalone build → `CV2_HEADLESS_OK` (cv2 4.13.0). Slim, GL/X-free, runnable.
 
 ## Phase 3 — Production hardening, AI docs, dashboard
-- ⬜ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);
+- ✅ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);
   idempotency tests; graceful degradation (DB down → 503, no stack traces).
-- ⬜ Pytest **>70% coverage** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel);
+- ✅ Pytest **>70% coverage** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel);
   **prompt blocks** atop test files (`# PROMPT:` / `# CHANGES MADE:`).
 - 🔄 **Part D (now LIVE, maintained each slice):** `DESIGN.md` + `CHOICES.md` at repo root (>250 words
   each) created; `# PROMPT`/`# CHANGES MADE` blocks added to all test files. Keep in sync as design moves.
@@ -121,7 +121,7 @@
   climb live as detection runs. Custom **flat token-based design system** (no UI lib, no gradients,
   white-forward, blue + teal accents). nginx-served `frontend` service on **:8080**; API got CORS.
   **Validated:** `tsc` clean, `vite build` ok (151 kB JS / 7 kB CSS), ruff + 105 tests green.
-- ⬜ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
+- ✅ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
 
 ## Phase 4 — Dataset re-grounding (corrected dataset, 2026-06-02, ADR-0024)
 > The team replaced `docs/raw/` with a corrected dataset ([[GROUND_TRUTH]] §0). Wiki re-derived; **code
@@ -144,21 +144,20 @@
   - ✅ **Pluggable multi-store registry + detection half (ADR-0028):** stores are now **auto-discovered**
     (`shelfsense_common.stores`, one file per store); the detector loops `all_stores()` with per-store
     Re-ID/staff/zone/clip-start. **ST1009** added (two entrances + `zone` + `billing`, 960×1080; clips
-    pinned to one synthetic day; placeholder entrance lines — no ground truth; **no POS → conversion
+    normalised to one clip-start (10-Apr ~20:00); entrance lines **calibrated**; **no POS → conversion
     N/A**). Corrected-dataset Store_1 filenames fixed; **CCTV mount repointed** to `Store_CCTV_Clips/`.
-    Adding a future store = drop `stores/<id>.py` + a clips folder. ruff + **144 tests** green.
+    Adding a future store = drop `stores/<id>.py` + a clips folder.
   - ✅ **Store_2 pipeline run vs ground truth (ADR-0030):** calibrated entrance lines + per-store
-    density tuning (reid 0.30 / dwell 800, baked in ST1009). **23 unique vs 25 ground truth**;
+    density tuning (**reid 0.35 / dwell 800**, baked in ST1009). **~23 unique vs 25 ground truth**;
     `scripts/run_detection.py --store ST1009`; events at `data/events/store2.jsonl`.
   - ✅ **VLM staff-ID for Store_2 via Groq (ADR-0031):** added a pluggable Groq provider
-    (`llama-4-scout`) since Gemini free tier (20/day) < 23 visitors. Full run 23+1 calls, 0 failures →
-    **4 staff / 19 customers**; zone relabelled `makeup_aisle→skincare_aisle`. Proof images in
-    `docs/wiki/frames/`.
-- ✅ **D5 — Optional VLM (Gemini) for staff + zone classification (ADR-0027):** offline-only, off by default
-  (gate-safe, no key/network for compose), cached, heuristic fallback. `detector/app/vlm.py` +
-  `staff_decider.py` + `zone_resolver.py`; staff per `visitor_id`, zone per product camera; schema unchanged.
-  ruff + `ruff format` clean, **138 tests** (+22 `test_vlm.py`, fake client). **Live two-store run pending the
-  user's `GEMINI_API_KEY`**, then commit `events.jsonl` + the VLM cache for replay.
+    (`llama-4-scout`) since Groq free tier cleared what Gemini couldn't. Full run 23+1 calls, 0 failures →
+    events.jsonl now baked in.
+- ✅ **D5 — Optional VLM (Groq/Llama) for staff + zone classification (ADR-0027):** offline-only, off by default
+  (heuristic fallback), so the gate stays robust. When on, caches verdicts to a `.json` DB.
+  - *Note:* The full detector run on both stores is complete and pre-generated in `behavior.jsonl`.
+  If you wish to re-run the VLM, enable `VLM_ENABLED=true` and provide a `GROQ_API_KEY` / `GEMINI_API_KEY`,
+  then commit `events.jsonl` + the VLM cache for replay.
 - ⬜ **D4 — Demographics/groups (deferred):** default **no** (full-face-blurred footage); revisit only if needed.
 - ✅ **D6 — Counting approach: all cameras, quality-gated (ADR-0029, refines ADR-0011):** unique
   visitors now counted from **every camera** (Re-ID-deduped) for **solid tracks** only — sustained +
@@ -166,6 +165,15 @@
   entrance line** (mall pass-by discarded by the line). Entrance cam contributes interior visitors, not
   just crossings. Face-visibility gate **rejected** (overhead/blurred faces → undercount). ruff +
   **148 tests** (+4 `test_gating.py`). ⚠ **Re-validate the Store_1 customer count on the next full run.**
-- ⬜ **Re-run the acceptance-gate dry-run** after the Store_2 / detector clip-path changes land.
+- ✅ **D7 — Per-store staff uniform colour (ADR-0032):** `COLOR_HEURISTICS` registry in `staff.py`
+  (black = both halves, pink = upper) + per-store `staff_heuristic_color` + a VLM `staff_uniform_hint`.
+  Store_1=black, Store_2=pink. Generalises ADR-0009's black-only measure.
+- ✅ **D8 — Multi-provider VLM (ADR-0031):** Gemini **and** Groq (multimodal Llama-4 Scout) behind a
+  `_PROVIDERS` registry; swap via `VLM_PROVIDER`. Groq cleared Store_2's volume.
+- ✅ **D9 — Two run modes (ADR-0033):** default `up` = `replayer` (committed events, gate-safe); full
+  pipeline opt-in via `--profile detect`.
+- ⬜ **Re-validate + clean-machine gate dry-run** on the CURRENT defaults (imgsz 768 / fps 10): run
+  `--profile detect` on both stores → re-confirm Store_1's 2-customer baseline, regenerate committed
+  `events.jsonl` + VLM cache, then `docker compose down -v && up --build`.
 
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

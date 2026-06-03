@@ -12,7 +12,8 @@
 - **Zone** — a named store region from the floor plan ([[GROUND_TRUTH]] §4): entrance, skincare_aisle,
   makeup_aisle, foh_center, checkout, accessories, stockroom (staff). Each camera maps to one zone:
   by default the hand-mapped `primary_zone`, or — for **product** cameras with `VLM_ENABLED=true` — a
-  **Gemini-labelled** zone read from the shelves (entrance/checkout/stockroom stay role-known; ADR-0027).
+  **VLM-labelled** zone (Gemini or Groq) read from the shelves (entrance/checkout/stockroom stay
+  role-known; ADR-0027). On Store_2 the VLM relabelled the `zone` cam `makeup_aisle → skincare_aisle`.
 - **Visitor** — one visit session, identified by a `visitor_id` (Re-ID). Re-entries keep the same id.
 - **Transaction** — one POS order from the CSV (`distinct order_id`). 24 on 10-Apr-2026.
 
@@ -34,10 +35,10 @@
   Store_1 clip was **2 customers** + 3 staff under the floor-cam-only rule; **re-validate on the next
   full run** now that counting spans all cameras — ADR-0029.)
 - **POS source (corrected dataset, [[GROUND_TRUTH]] §2):** 7-col `POS - sample transactions.csv` → a
-  **transaction = distinct `order_time`** (`order_id` is now per-line-item, not the basket key),
-  `timestamp` from `order_date`+`order_time` (local, no tz), `basket_value` = Σ `total_amount` per
-  timestamp. **24 transactions**, store **ST1008** only (Store_1; Store_2 has no POS). **⚠ `pos_loader.py`
-  parses the OLD 20-col GMV format and must be reworked** before these KPIs are real again.
+  **transaction = one basket** keyed `"{store_id}_{order_date}_{order_time}"` (`order_id` is per-line-item,
+  not the basket key), `timestamp` from `order_date`+`order_time` (local → UTC via `store_timezone`),
+  `gmv` = Σ `total_amount` per basket, `brand` = the basket's dominant `brand_name`. **24 transactions**,
+  store **ST1008** only (Store_1; Store_2 has no POS). `pos_loader.py` was reworked for this format (done).
 - **⚠ Window caveat (handled, ADR-0012):** clips (~2 min) vs CSV (full day) differ, and no sale falls in
   the clip window. We **do not** divide mismatched windows: we report the honest clip conversion (**0%**,
   `data_confidence="low"`) and demonstrate the correlation on a comparable window (`demo_conversion.py`).
@@ -64,20 +65,24 @@
   `REENTRY`, never a second `ENTRY` — so footfall/conversion are not inflated. See [[EDGE_CASES]].
 
 ## Staff classification (excluded from customer metrics)
-- **Rule (ADR-0009):** Brigade staff wear a **complete black uniform**, so `is_staff` is set from a
-  **dark-uniform appearance score** — the min of the upper- and lower-body dark-pixel fraction (HSV Value
-  ≤ `staff_dark_v_max`, central column), reusing the Re-ID crop. A track is staff when its mean score ≥
-  `staff_darkness_threshold`. (The old Store_1 **stockroom cam (CAM4) was staff-only** and excluded at
-  source; it is **no longer in the corrected dataset** — [[GROUND_TRUTH]] §1.)
-- **Optional VLM override (ADR-0027):** when `VLM_ENABLED=true`, a **Gemini** call (once per
+Two signals, VLM-first with a heuristic fallback (ADR-0009/0027/0032):
+- **Per-store uniform-colour heuristic (always-available fallback):** `is_staff` from a **uniform-colour
+  score** — the fraction of in-range HSV pixels in the person crop, reusing the Re-ID crop. The colour is
+  **per store** via `staff_heuristic_color` (`staff.py` `COLOR_HEURISTICS` registry): **Store_1 = `black`**
+  (both upper+lower body, takes the min — a *full* black uniform scores high), **Store_2 = `pink`** (upper
+  body only — staff wear bright pink polos). A track is staff when its mean score ≥ `staff_uniform_threshold`
+  (default 0.50). `staff_heuristic_color=None` disables the heuristic (VLM-only). Adding a new uniform colour
+  = one entry in the registry + the store's `staff_heuristic_color`.
+- **VLM (primary when `VLM_ENABLED=true`, ADR-0027/0031):** a **Gemini or Groq** call (once per
   `visitor_id`, offline only) decides staff/customer and **overrides the heuristic when it clears
-  `vlm_staff_min_confidence`**; otherwise the dark-uniform heuristic stands. This is what makes staff
-  detection work for **Store_2 (pink staff)** without per-store colour tuning. Off by default, cached,
-  gate-safe — see [[DECISIONS]] ADR-0027.
+  `vlm_staff_min_confidence`** (else the heuristic stands). A per-store **`staff_uniform_hint`** is injected
+  into the prompt (Store_2: "staff wear bright solid pink polos"). Off by default, cached, gate-safe.
 - **Aggregation:** the API treats a visitor as staff if **any** of their events is flagged.
 - **Excluded** from unique visitors, conversion, funnel, heatmap — staff are not customers.
-- **Limits:** a genuinely black-clothed customer would be misflagged (ours are grey/violet); bright shelf
-  backgrounds dilute the score (so the entrance camera is not used for this). See [[EDGE_CASES]] #2.
+- **Limits:** on steep overhead CCTV uniforms/lanyards are hard to see, so the staff/customer split is the
+  weakest link — a same-colour customer can be misflagged, and the VLM verdict is crop-sensitive
+  ([[GROUND_TRUTH]] §1). The total head-count is the more reliable output. See [[EDGE_CASES]] #2.
+  (The old Store_1 stockroom cam CAM4 was staff-only; it is **no longer in the corrected dataset**.)
 
 ## Customer journey
 - Ordered sequence of zones a visitor passes through with timestamps. Append a zone only when dwell
@@ -122,7 +127,7 @@
   ⚠ We have **one day** of data, not a 7-day average, so the baseline is a **documented config target**.
   The check fires **only at `data_confidence="ok"`**; under low sample it emits **INFO** — it never cries
   wolf on the 2-min clip.
-- **Dead zone:** a monitored customer zone (from `STORE` config) with **no visit for
+- **Dead zone:** a monitored customer zone (from the store's config, per `store_id`) with **no visit for
   `anomaly_dead_zone_minutes`** during open hours (`store_open_hour`–`store_close_hour`). **Span-guarded:**
   only evaluated when the observed window is at least that long; otherwise **INFO** ("window too short").
 - Each: `severity` INFO/WARN/CRITICAL + a human `suggested_action`. **All compute from input** (no
@@ -156,9 +161,13 @@
 | `min_engagement_dwell` | min dwell to count zone engagement | 3 s |
 | `session_timeout` | track-lost duration that ends a session | 30 s |
 | `reentry_window` | gap within which a re-entry is the same visit | 120 s |
-| `staff_darkness_threshold` | mean dark-uniform score ≥ ⇒ `is_staff` (ADR-0009) | 0.50 |
-| `staff_dark_v_max` | HSV Value (0–255) ≤ ⇒ a pixel is "dark"/near-black | 70 |
+| `staff_uniform_threshold` | mean uniform-colour score ≥ ⇒ `is_staff` (ADR-0009/0032) | 0.50 |
+| `staff_heuristic_color` | **per-store** uniform colour for the heuristic (`black`/`pink`/None) | black |
+| `staff_uniform_v_max` | HSV Value (0–255) ceiling for the `black` heuristic's near-black test | 70 |
 | `staff_presence_fallback` | also flag long-present tracks as staff (off by default) | false |
+| `reid_max_distance` | appearance distance to merge tracks; **per-store override** (ST1009=0.35) | 0.55 |
+| `min_zone_dwell` (per-store) | **per-store override** of the dwell above (ST1009=800 ms) | 2000 ms |
+| `detector_imgsz` | YOLO inference size; **per-store override** (ST1008=480, global 768) | 768 |
 | `pos_correlation_window_ms` | billing-zone-before-a-sale window for "converted" (ADR-0012) | 300000 (5 min) |
 | `conversion_low_sample_threshold` | < N unique customers ⇒ `data_confidence="low"` | 20 |
 | `store_timezone` | tz for POS `order_date`+`order_time` → UTC | Asia/Kolkata |

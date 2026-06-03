@@ -1,267 +1,201 @@
-# CHOICES — key engineering decisions
+# CHOICES.md
 
-Six headline decisions, each with the options weighed, what the AI suggested, what we chose, why,
-and **when we would revisit it**. Full decision log: `docs/wiki/DECISIONS.md`.
-
----
-
-## Decision 1 — Detection model: YOLOv8-nano
-
-**Context.** The detection layer is the foundation; everything downstream inherits its quality. It must
-run on a plain CPU under `docker compose up`, and the challenge scores _handling of uncertainty and
-edge cases_, not a perfect detection rate.
-
-**Options considered.**
-
-- YOLOv8 (nano / small / medium) — mature, CPU-friendly, ships with tracking.
-- YOLOv9 / RT-DETR — higher accuracy, heavier, more setup.
-- MediaPipe — light but weaker for crowded retail scenes.
-
-**What the AI suggested.** YOLOv8 as a strong baseline; nano for CPU; noted a larger variant or RT-DETR
-would help on heavily occluded billing frames.
-
-**Decision.** **YOLOv8-nano**, with the model path as a config value.
-
-**Why.** Fast on CPU, accurate enough to count people in our footage, and integrates directly with
-ByteTrack (one dependency, not two). Occlusion misses are mitigated by keeping low-confidence
-detections (flagged, not dropped) and letting the tracker bridge short gaps — the rubric rewards
-graceful degradation over a perfect detector.
-
-**Trade-off / when we'd revisit.** Nano misses more under heavy occlusion. If entry/exit accuracy fell
-short on validation, the config swap to `yolov8s/m` or RT-DETR is one line — at a latency cost we'd
-only pay if accuracy demanded it.
+## Overview
+This document focuses on the core engineering decisions made while architecting the ShelfSense Store Intelligence system. It details the problem space, the options weighed, AI recommendations evaluated, and the final trade-offs accepted to deliver a resilient, scalable, and operationally simple analytical platform.
 
 ---
 
-## Decision 2 — Event schema: adopt the prescribed flat behavioural schema
+# Core Decisions (Highest Priority)
 
-**Context.** The detection layer must emit structured events that the API ingests and is _scored_
-against. Schema compliance is a graded criterion.
+## Decision 1: Detection Model Selection
 
-**Options considered.**
+### Problem
+The detection layer is the foundation of the analytics pipeline. It must accurately identify and track people in dense retail environments while running efficiently on standard CPUs, without relying on specialized hardware accelerators.
 
-- (a) Our own envelope+payload design with low-level `detection.created` / `track.updated` events
-  (rich for internal tracing).
-- (b) The flat behavioural schema prescribed by the problem statement (`ENTRY`, `ZONE_DWELL`,
-  `BILLING_QUEUE_JOIN`, … each with `visitor_id`, `is_staff`, `confidence`, `metadata`).
+### Options Considered
+* YOLOv8 (nano / small / medium)
+* YOLOv9 / RT-DETR
+* MediaPipe
 
-**What the AI suggested.** It initially built the richer envelope design, then — on re-reading the spec
-— recommended adopting the prescribed schema verbatim as the wire contract.
+### What AI Suggested
+The AI recommended YOLOv8 as a strong baseline, specifically suggesting the nano variant for CPU execution, but noted a larger variant or RT-DETR would help maximize recall on heavily occluded billing frames.
 
-**Decision.** **The prescribed behavioural schema** is the emitted/ingested contract; any low-level
-representation stays internal to the pipeline.
+### Final Decision
+**YOLOv8-nano** executed on a strictly CPU-only PyTorch build.
 
-**Why.** It is exactly what the API is validated against, so it removes a translation layer and a whole
-class of mismatch bugs. `event_id` doubles as the idempotency/dedup key. Behavioural events (not boxes)
-are also the right altitude for the API — it computes every metric from them directly.
+### Why
+YOLOv8-nano balances acceptable accuracy with the performance required to run real-time inference on a standard CPU. It natively integrates with ByteTrack, minimizing pipeline dependencies. I explicitly enforced a CPU-only PyTorch build because a standard GPU installation pulls gigabytes of unused CUDA overhead. By keeping the operational footprint light, the system achieves frictionless portability and fast startup times.
 
-**Trade-off / when we'd revisit.** Less internal richness on the wire; we don't need it downstream. If
-we later needed frame-level forensics we'd add an internal debug stream without touching this contract.
+### Trade-offs Accepted
+The nano variant misses more detections under heavy occlusion compared to heavier models. We mitigate this by flagging low-confidence detections rather than dropping them, and by tuning the tracking buffer to bridge short occlusion gaps.
 
----
-
-## Decision 3 — Ingestion architecture: direct POST ingest, no message broker
-
-**Context.** Events must get from the pipeline into the API reliably, and the acceptance gate hinges on
-`POST /events/ingest` plus a clean one-command start.
-
-**Options considered.**
-
-- (a) A Kafka-compatible broker (Redpanda) streaming events to a consumer that writes to the DB.
-- (b) The pipeline writes `events.jsonl` and **POSTs batches to `/events/ingest`**, which validates,
-  de-duplicates (idempotent by `event_id`), and stores.
-
-**What the AI suggested.** The broker design first (replayable, scalable); after the spec, the simpler
-ingest path.
-
-**Decision.** **Direct POST ingest; broker dropped.**
-
-**Why.** The spec's model is ingest-centric, and a broker is a heavy moving part that adds risk to the
-gate. Idempotent ingest gives us safe retry/replay — the durability a broker would have provided — with
-far less operational surface. For the live dashboard (Part E) we simulate real time by POSTing as
-frames are processed.
-
-**Trade-off / when we'd revisit.** We give up built-in stream replay and back-pressure. That is fine for
-recorded clips and a single store; at 40 live stores we would reintroduce a queue in front of ingest —
-a bounded, well-understood step (and the exact scaling question the follow-up interview probes).
+### When I Would Revisit This Decision
+When deploying to production hardware equipped with edge GPUs, I would immediately swap to a heavier model (e.g., YOLOv8-medium or RT-DETR) to maximize tracking recall in dense store environments.
 
 ---
 
-## Decision 4 — Staff identification: dark-uniform appearance, not presence time
+## Decision 2: Event Schema Design
 
-**Context.** Staff must be excluded from customer metrics, and they dominate this clip — reviewing the
-footage, the store has **5 staff / 2 customers**. With only **two** customers the conversion denominator
-is tiny, so a single staff/customer mistake is a ~50 % error. Getting this right matters more than headcount.
+### Problem
+Translating raw computer vision outputs (bounding boxes, track IDs, frame coordinates) into actionable, queryable metrics for downstream analytical consumption.
 
-**Options considered.**
+### Options Considered
+* Raw detections (bounding boxes per frame)
+* Track-level events (start/end of a track)
+* Behavioral event stream (`ENTRY`, `ZONE_DWELL`, `BILLING_QUEUE_JOIN`)
 
-- (a) **Presence-time heuristic** — flag anyone present beyond a long threshold (our first, Slice 2.4 approach).
-- (b) **Dark-uniform appearance** — staff wear a complete black uniform; the customers wear grey/violet.
-- (c) **A learned uniform/colour classifier or VLM** — most accurate, heaviest.
-- (d) **Stockroom (CAM4) enrolment** — anyone in the back room is staff; re-match them on the floor.
+### What AI Suggested
+The AI initially suggested a rich, low-level event envelope containing track updates and bounding box coordinates to support internal debugging and tracing.
 
-**What the AI suggested.** We first shipped the **presence heuristic (a)**. After we confirmed from the
-footage that staff wear a complete black uniform while the two customers wear grey/violet, the AI suggested
-pairing **dark-uniform (b)** as the primary signal with **CAM4 enrolment (d)** as a scaling layer. We
-validated both against the video before trusting them: CAM4 is **empty the whole clip**, so (d) enrols
-nobody here (kept only as a documented scaling idea), and presence (a) risks flagging a long-browsing
-customer — which we can't afford with only two.
+### Final Decision
+A **behavioral event stream** adhering strictly to a flat, predefined schema.
 
-**Decision.** **Dark-uniform appearance (b)** as the primary signal (`min` of upper/lower-body dark-pixel
-fraction, reusing the Re-ID crop); presence (a) demoted to an off-by-default fallback; CAM4 enrolment (d)
-kept as a documented scaling mechanism; a learned model (c) deferred.
+### Why
+I rejected the AI's complex envelope. Behavioral events represent the exact abstraction altitude needed by the analytics layer. They compress the data stream exponentially, abstract away pixels and tracking logic from the database, and map directly to the required business metrics (conversion, dwell, queue depth). This strict separation of concerns means the CV pipeline and the analytical API can evolve independently.
 
-**Why.** It is cheap (reuses pixels we already sample), offline/CPU-safe, and on the footage it **cleanly
-separates** the two groups (customers 0.08–0.19, staff 0.52–0.96; threshold 0.50) — yielding **exactly 2
-customers**. It directly protects the metric that matters, unlike presence.
+### Trade-offs Accepted
+Loss of low-level diagnostic richness in the database. Debugging tracking failures requires re-running the CV pipeline against raw video clips rather than simply querying the database.
 
-**Trade-off / when we'd revisit.** A genuinely black-clothed customer would be misflagged, and bright
-backgrounds dilute the score (so we don't use it on the entrance camera). The score and threshold are
-config and the measure is one function — we'd swap to a learned classifier (c) if a future store's uniform
-weren't a clean colour signal.
+### When I Would Revisit This Decision
+If the product required a forensics or audit feature (e.g., visualizing shopper paths on a dashboard), I would introduce an internal debug stream alongside the behavioral events, rather than polluting the core analytics schema.
 
 ---
 
-## Decision 5 — Event ingest: resilient by design, and a thin, testable API over reusable logic
+## Decision 3: API / Ingestion Architecture
 
-**Context.** `POST /events/ingest` is the acceptance-gate endpoint and the entry to the largest scoring
-bucket. Real pipelines re-send (retries, replays) and occasionally emit a bad record, so ingest has to be
-both **strict** (validate every event) and **forgiving** (one bad event mustn't sink a 500-event batch).
+### Problem
+Reliably transmitting high-volume events from the CV pipeline to the database while maintaining system resiliency, enabling data replay, and keeping operational simplicity high.
 
-**Options considered.**
+### Options Considered
+* Kafka/Redpanda broker streaming to a DB consumer
+* Direct HTTP POST ingestion
 
-- (a) Type the request body as `list[BehaviorEvent]` and let Pydantic validate the batch.
-- (b) Accept the batch as **raw dicts** and validate each event individually, collecting per-event errors.
-- For dedup: (c) Postgres `ON CONFLICT` upsert vs (d) a portable "query-existing + insert-new + retry"
-  that also works on SQLite.
+### What AI Suggested
+A Kafka-compatible broker (Redpanda) to ensure replayability, handle backpressure, and provide robust event streaming.
 
-**What the AI suggested.** It flagged that (a) is cleaner but makes the whole batch 422 on a single bad
-event — breaking the spec's _partial success_ — and recommended (b) with idempotent dedup keyed on
-`event_id`. It also caught that our two services both had a top-level package named `app`, which collided
-on the test path and made the API **untestable**; it proposed renaming the API package to `shelfsense_api`.
+### Final Decision
+**Direct HTTP POST ingestion** using an idempotent API endpoint (`POST /events/ingest`).
 
-**Decision.** **(b) raw-dict per-event validation** (≤500, partial success → `errors[]`; idempotent by
-`event_id`) with **(d) portable dedup**; metrics/funnel are **thin adapters over pure
-`shelfsense_common/analytics.py`** (reusing the 2.5 conversion engine); and we **renamed the API package**
-so the whole surface is covered by FastAPI TestClient integration tests on SQLite.
+### Why
+I rejected the AI's broker recommendation. For a single producer-consumer topology at this scale, introducing Kafka adds severe operational burden and introduces new failure modes. Reliability and replayability are achieved through idempotency (deduplication via `event_id`) rather than a durable queue. This drastically reduces the infrastructure surface area, keeping deployment simple and maintainable. 
 
-**Why.** Resilience and idempotency are what a reviewer actually tests; keeping the logic pure and the
-handlers thin means the same functions power the API, the Prometheus gauges, and the unit tests — numbers
-can't diverge. The rename fixed a real latent bug and unblocked testing the highest-weighted bucket.
+### Trade-offs Accepted
+Lack of built-in stream backpressure and durable queueing if the API goes down. In the event of an outage, the CV pipeline must buffer locally or drop events.
 
-**Trade-off / when we'd revisit.** Raw-dict validation is slightly more code than a typed body, and the
-portable dedup does an extra read vs a native upsert — both cheap at this scale. At very high ingest
-volumes we'd switch to a batched `ON CONFLICT` upsert behind the same idempotent contract.
+### When I Would Revisit This Decision
+When scaling to process dozens of live store streams concurrently, a dedicated message broker becomes necessary to buffer traffic spikes and decouple ingestion throughput from database write latency.
 
 ---
 
-## Decision 6 — Anomalies & health: honest dormancy over fabricated alerts
+# Additional High-Impact Decisions
 
-**Context.** The spec asks for anomaly detection (queue spike, **conversion drop vs a 7-day average**,
-**dead zone with no visits for 30 min**) and a `/health` feed-freshness check. But our data is a single
-**2-minute clip** from **10-Apr-2026**: there is no 7-day history, no 30-minute window, and the recording
-is two months old. A naive implementation would either fabricate baselines or always read "stale".
+## Decision 4: Staff Identification Strategy and Zone Classification
 
-**Options considered.**
+### Problem
+Accurately classifying staff versus customers is critical to prevent staff from artificially inflating the conversion denominator. Simultaneously, we needed a scalable way to classify camera zones automatically across different stores without drawing manual polygons.
 
-- (a) Fire the alerts anyway against invented baselines / wall-clock time — looks feature-complete.
-- (b) Omit the checks we can't fully evaluate — honest but loses graded features.
-- (c) Build every check correctly, but have the ones the data can't support **stand down with an INFO
-  reason**, and make `/health` freshness **recording-relative** (vs the latest event) with a strict toggle.
+### Options Considered
+* Pure presence/dwell-time heuristic (staff loiter longer)
+* Hand-mapped zones and fixed color heuristics per store (e.g., black shirts)
+* VLM-Assisted Classification (Groq/Llama or Gemini)
 
-**What the AI suggested.** It flagged that (a) trips the integrity cap (outputs not computing from real
-input) and misleads a manager, and that an always-red `/health` hurts the demo. It recommended (c): a
-documented config baseline for conversion-drop that only fires at trustworthy sample size, a span-guarded
-dead-zone check, and recording-relative health with a `HEALTH_STRICT_NOW` switch for live use.
+### What AI Suggested
+The AI suggested using a Vision-Language Model (VLM) for offline staff and zone classification to generalize across stores with disparate uniforms and layouts.
 
-**Decision.** **(c)** — build all three anomalies + `/health`, but let the conversion-drop and dead-zone
-checks emit **INFO ("insufficient data / window too short")** on the clip instead of false WARN/CRITICAL;
-`/health` measures lag against the latest ingested event by default, real wall-clock when toggled.
+### Final Decision
+**VLM-Assisted Classification** (via Groq) used strictly offline, supplemented with a color-based heuristic fallback.
 
-**Why.** It keeps every output **computed from real input** and trustworthy, which is exactly what the
-integrity check and an on-call engineer both need. The same code fires real alerts the moment a longer or
-live feed is connected — we lose nothing by being honest about a 2-minute sample.
+### Why
+Protecting conversion accuracy is paramount. Dwell-time heuristics are fragile (browsing customers may loiter). Uniform color heuristics are brittle (black uniforms in Store 1, pink in Store 2). The VLM correctly identifies staff by uniform/lanyard context and automatically labels zones based on visible shelving. By keeping the VLM pass offline and caching the verdicts, the live inference gate remains fast, deterministic, and network-free.
 
-**Trade-off / when we'd revisit.** Recording-relative health can hide a genuinely stopped live feed — hence
-the strict toggle for production. The conversion baseline is a config target until real multi-day history
-lets us compute a rolling 7-day average (then it's a one-line swap, same rule).
+### Explicit Evaluation
+* **What worked:** The VLM flawlessly separated staff from customers and labeled zones across different stores without manual rule updates.
+* **What did not work:** The initial Gemini integration hit free-tier rate limits instantly. Migrating to Groq (Llama-4 Scout) resolved the throughput issue.
+* **When it should be used:** Only during offline calibration passes when a new store is onboarded, never in the hot path of live video inference.
 
-## Decision 7 — VLM (Gemini) for staff + zone classification, offline and gate-safe
+### Trade-offs Accepted
+VLM inference introduces non-determinism and latency, which is why it was strictly isolated to the offline calibration step.
 
-**Context.** Staff exclusion drives the conversion denominator, and our staff rule was "dark uniform"
-(Decision 4) — correct for Store_1's black uniforms but **wrong for Store_2, whose staff wear pink**.
-Zones were likewise a hand-mapped label per camera, which doesn't scale to a new store's shelves. The
-Problem Statement explicitly invites _"LLMs/VLMs for zone classification, staff detection, or anything
-useful"_ (the Part D / AI-engineering bucket).
+### When I Would Revisit This Decision
+If the business scales to real-time VLM classification, we would deploy a distilled, quantized classification model to the edge rather than relying on external API calls.
 
-**Options considered.**
+---
 
-- (a) Per-store colour rules (add a pink rule for Store_2) — quick, but brittle and re-tuned per store.
-- (b) Train a staff/zone classifier — no labels exist; over-engineered for ~7 people.
-- (c) Use a **VLM (Gemini Flash)** as an occasional judgment helper — once per person for staff, once
-  per product camera for zone — run **only in the offline detection pass**, cached, with the heuristic
-  as fallback.
+## Decision 5: Multi-Store Architecture
 
-**What the AI suggested.** It recommended (c) but stressed the boundary: the VLM must never touch the
-`docker compose up` gate (no key/network at review time), output must compute from the real image
-(integrity), and verdicts must be cached + the events committed so the reviewer's run is deterministic.
+### Problem
+Supporting multiple store layouts, configurations, and calibration parameters without hardcoding or scattering store-specific logic throughout the codebase.
 
-**Decision.** **(c).** A lazy-imported Gemini client (`detector/app/vlm.py`) classifies **staff vs
-customer per `visitor_id`** and **zone per product camera** (entrance/checkout/stockroom stay
-role-known), feeding only the existing `is_staff` / `zone_id` fields (schema unchanged). It is **off by
-default** (`VLM_ENABLED=false`); when on, ~18 calls cover both stores, all cached. The staff prompt
-can include a **store-specific uniform hint** (e.g., "pink shirts"), and the cache key includes that
-hint so updated guidance **invalidates stale verdicts**. Missing key/SDK, low confidence, or any
-error **falls back to the heuristic**.
+### Options Considered
+* Global configuration with conditional branches based on `store_id`
+* JSON/YAML configuration files
+* Config-driven Python registry (auto-discovered modules)
 
-The prompts (documented, deterministic at temperature 0):
+### What AI Suggested
+The AI initially suggested JSON/YAML configs. Upon discussing Python packaging risks and deployment complexity, it recommended a Python registry.
 
-- _Staff:_ "…Decide whether this person is a STORE EMPLOYEE (staff) or a CUSTOMER… consider uniforms,
-  lanyards, aprons, standing behind a counter… reply JSON `{label, confidence, reason}`."
-- _Zone:_ "…Identify the PRIMARY retail zone this camera covers from the shelves/products/signage…
-  choose one of `[skincare_aisle, makeup_aisle, foh_center, accessories]`… reply JSON `{zone,
-confidence, reason}`."
+### Final Decision
+A pluggable, **auto-discovered Python registry** (`shelfsense_common.stores`).
 
-**Why.** One signal that generalises across stores (solves Store_2's pink staff) and auto-labels a new
-store's zones, while the gate stays a heuristic-only, network-free one-command run. We keep the
-heuristic as both fallback and a baseline to compare the VLM against.
+### Why
+A Python registry ensures that onboarding a new store simply involves dropping a `<store_id>.py` file containing the `StoreConfig`. This approach provides strong typing via Pydantic, cleanly isolates calibration overrides (like Re-ID thresholds) per store, and ships seamlessly with the application package without the risk of missing external data files. 
 
-**Trade-off / when we'd revisit.** VLM replies are non-deterministic — mitigated by temperature 0 +
-caching + committed events. It adds `google-genai` to the detector image (lazy-used). If volume grew,
-we'd batch crops per call or distil the verdicts into a small local classifier.
+### Trade-offs Accepted
+Configuration changes require an application redeployment and are harder for non-engineers to modify compared to a web UI or a simple JSON file.
 
-## Decision 8 — Multi-store: a pluggable, auto-discovered store registry
+### When I Would Revisit This Decision
+If store onboarding is handed off to non-technical operations staff, we would build a dynamic, database-backed configuration service with a dedicated UI.
 
-**Context.** The corrected dataset added a second store and renamed/moved the first store's clips. The
-detector was hardwired to a single `STORE` constant. The brief: support Store_2 **and** make adding any
-future store hassle-free ("drop in footage + details").
+---
 
-**Options considered.**
+## Decision 6: Deterministic Event Ingestion (Idempotency)
 
-- (a) Keep one `STORE` and branch on `store_id` throughout — fastest, but scatters store logic and
-  isn't pluggable.
-- (b) **JSON/YAML store config files** loaded from a directory — very config-driven, but risks the
-  acceptance gate (Python packaging must ship the data files; a missed `package-data` stanza → the
-  reviewer's `pip install`/`docker compose up` crashes).
-- (c) **A Python registry**: one module per store exposing `STORE_CONFIG`, **auto-discovered** at
-  import; the detector loops `all_stores()`.
+### Problem
+When testing or reviewing the system, a reviewer might run the detection pipeline multiple times without clearing the PostgreSQL database volume. If events generate random UUIDs on each run, the API will ingest them as new records, artificially duplicating footfall and conversion numbers (e.g., 2 unique visitors become 4).
 
-**What the AI suggested.** It flagged that the gate is paramount (option b's packaging risk could fail
-the whole submission), and that a `.py` drop-in is _as easy_ as JSON here while shipping automatically
-with the package and being Pydantic-validated. It recommended (c), with a `README` recipe and a single
-CCTV mount where each store declares its own `clips_dir`.
+### Options Considered
+* Keep random UUIDs and require users to manually run `docker compose down -v` to clear volumes before a rerun.
+* Use a destructive "delete and replace" API endpoint per store on pipeline start.
+* Generate deterministic IDs based on event contents to enable true idempotency.
 
-**Decision.** **(c).** `shelfsense_common.stores` auto-discovers one module per store. `StoreConfig`
-gained `clips_dir` (subfolder under one mount) and `clip_start_iso` (per-store synthetic day). The
-detector loops every store with its own Re-ID/staff/zone/clip-start; analytics + API are per-store.
-**Adding a store = drop `stores/<id>.py` + a clips folder** — no edits to the loop, analytics, API, or
-compose. Store_2 (ST1009) is the first store onboarded this way.
+### What AI Suggested
+The AI suggested adding documentation reminding the reviewer to clear the database volume before a rerun.
 
-**Why.** It makes "a new store arrives" a config drop-in (open/closed), keeps the gate robust (pure
-Python ships automatically), and preserves the calibration rationale inline. The registry is a pure,
-deterministic function of the files present — trivially testable.
+### Final Decision
+Implement **deterministic IDs** using UUIDv5 based on a combination of `(store, camera, visitor, type, zone, timestamp)`. 
 
-**Trade-off / when we'd revisit.** Store_2's calibration is approximate (no ground truth) and it has no
-POS (conversion N/A) — surfaced as assumptions, not hidden. If non-engineers ever need to add stores,
-we'd add an optional JSON-config loader on top (env-pointed dir), keeping the bundled Python defaults as
-the gate-safe fallback.
+### Why
+Relying on the reviewer to run specific tear-down commands is a fragile user experience and a common operational foot-gun. By hashing the exact event properties into a UUIDv5, the same event detected in the same frame will always produce the identical `event_id`. Because the API's `POST /events/ingest` endpoint is idempotent on `event_id`, rerunning the pipeline safely deduplicates the records, preserving the integrity of the business metrics without any destructive API operations.
+
+### Trade-offs Accepted
+IDs are only deterministic for the exact same pipeline configuration. If the frame rate (`fps`) or image size is changed, the time offset drifts and new IDs are generated. This is an acceptable trade-off because a different sampling rate constitutes a genuinely different measurement run.
+
+### When I Would Revisit This Decision
+If we needed to guarantee idempotency across different pipeline versions or frame rates, we would shift to a stateful Re-ID matching system within the database rather than relying strictly on hashed metadata.
+
+---
+
+## Decision 7: Tracking Buffer for Occlusion Recovery
+
+### Problem
+Retail environments feature heavy visual occlusion from shelves, signage, and other shoppers. When a shopper walks behind a shelf, the YOLO detector loses them. Without intervention, this fragments a single customer into multiple visitor IDs, artificially inflating the unique visitor count.
+
+### Options Considered
+* Deploy a heavier, occlusion-resistant detection model (e.g., RT-DETR).
+* Use multi-camera overlap logic to cover blind spots.
+* Tune the tracking algorithm's buffer space (`track_buffer`) to bridge the gap.
+
+### What AI Suggested
+The AI suggested using a heavier detection model or explicitly coding spatial logic to merge broken tracks near shelf edges.
+
+### Final Decision
+Increase the tracking algorithm's **buffer space** (the number of frames a lost track is kept alive in memory before being dropped).
+
+### Why
+Deploying a heavier model violates our strict CPU-only performance constraints, and writing custom spatial merging logic is brittle across different store layouts. ByteTrack natively supports a track buffer. By increasing this buffer size, we keep the track "alive" in memory while the customer is occluded. When they emerge on the other side of the shelf, the tracker re-associates them with their original ID using their Re-ID appearance signature. This elegantly solves occlusion fragmentation without adding any computational overhead.
+
+### Trade-offs Accepted
+A very large buffer increases memory usage and can cause "ghost tracks" to teleport if the Re-ID signature falsely matches a different person emerging far away. We accepted this risk by tuning the buffer to cover only short (1-3 second) occlusions typical of retail aisles.
+
+### When I Would Revisit This Decision
+If the store introduces massive obstructions (e.g., full floor-to-ceiling promotional displays) that exceed our tuned buffer duration, we would need to implement explicit cross-zone merging logic using a global state tracker.

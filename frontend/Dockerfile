@@ -5,7 +5,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 # Install deps first (better layer caching). npm ci when a lockfile is present, else npm install.
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+RUN --mount=type=cache,target=/root/.npm npm ci || npm install
 COPY . .
 RUN npm run build
 

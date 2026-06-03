@@ -1,9 +1,11 @@
-"""Vision-Language Model (Google Gemini) client for the OFFLINE detection pass (ADR-0027).
+"""Vision-Language Model client for the OFFLINE detection pass (ADR-0027/0031).
 
-The detector can ask a VLM two narrow, high-value questions while it generates events:
+Pluggable multi-provider: the default is **Groq** (multimodal Llama-4 Scout — what we actually ran);
+**Gemini** is also supported. The detector can ask a VLM two narrow, high-value questions while it
+generates events:
 
-  * **staff vs customer** — once per tracked person (replaces the per-store dark-uniform heuristic
-    in `staff.py`, which breaks when a store's staff don't wear black — e.g. Store_2's pink);
+  * **staff vs customer** — once per tracked person (replaces the per-store uniform-COLOUR heuristic
+    in `staff.py`, which is brittle when a customer happens to wear the staff colour);
   * **camera zone** — once per camera (replaces the hand-mapped `primary_zone` in `zones.py`),
     by reading the shelves the camera actually shows.
 
@@ -54,7 +56,7 @@ class ZoneVerdict:
 
 
 class VLMClient(Protocol):
-    """The narrow surface the detector depends on (real Gemini client or a test fake)."""
+    """The narrow surface the detector depends on (a real provider client or a test fake)."""
 
     def classify_staff(
         self, image_bgr: np.ndarray, staff_hint: str | None = None

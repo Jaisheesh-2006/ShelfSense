@@ -77,7 +77,7 @@ def _load(store_id: str) -> tuple[Settings, list[BehaviorEvent], list[Transactio
     settings = get_settings()
     with get_session() as session:
         events = fetch_events(session, store_id)
-        txns = fetch_transactions(session)
+        txns = fetch_transactions(session, store_id)
     return settings, events, txns
 
 

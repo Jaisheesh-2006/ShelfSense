@@ -1,0 +1,122 @@
+{
+  "staff:ST1009:VIS_0001": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The person is wearing casual clothing (red t-shirt and black pants) and appears to be carrying a shopping bag, which are common indicators of a customer."
+  },
+  "staff:ST1009:VIS_0002": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The individual is not clearly wearing a uniform or displaying an ID badge, and their position does not distinctly indicate they are behind a counter."
+  },
+  "staff:ST1009:VIS_0003": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person is not wearing a uniform or an ID badge, and does not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0004": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person is wearing a casual dress and there is no clear indication of a uniform, lanyard, ID badge, or apron. They also do not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0005": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The person does not appear to be wearing a uniform or an ID badge, and is not standing behind a counter."
+  },
+  "staff:ST1009:VIS_0006": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "no visible uniform, ID badge, or apron; appears to be shopping"
+  },
+  "staff:ST1009:VIS_0007": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The person is wearing casual clothing and does not appear to be wearing a uniform, lanyard/ID badge, or apron. They also do not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0008": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The individual is wearing casual clothing, not a uniform, and there is no visible lanyard or ID badge. She also does not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0009": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The person is wearing casual clothing and does not appear to be wearing a uniform, lanyard, or ID badge. There is no visible apron or indication that they are standing behind a counter."
+  },
+  "staff:ST1009:VIS_0010": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "partial view, no clear uniform or staff indicators"
+  },
+  "staff:ST1009:VIS_0011": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The person is not wearing a uniform, lanyard, or ID badge, and does not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0012": {
+    "confidence": 0.6,
+    "is_staff": false,
+    "reason": "The person does not appear to be wearing a uniform, lanyard/ID badge, or apron, and is not standing behind a counter."
+  },
+  "staff:ST1009:VIS_0013": {
+    "confidence": 0.9,
+    "is_staff": false,
+    "reason": "The individual does not appear to be wearing a uniform, lanyard/ID badge, or apron, and is not standing behind a counter."
+  },
+  "staff:ST1009:VIS_0014": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person is not wearing a uniform, lanyard, or ID badge, and does not appear to be standing behind a counter."
+  },
+  "staff:ST1009:VIS_0015": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person is not clearly visible, no uniform or ID badge is seen"
+  },
+  "staff:ST1009:VIS_0016": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person is not clearly wearing a uniform or ID badge, and is browsing products."
+  },
+  "staff:ST1009:VIS_0017": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person does not have clear visible staff identifiers."
+  },
+  "staff:ST1009:VIS_0018": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The person does not have visible staff identifiers like a uniform, lanyard, or ID badge, and their position in the store is not clearly behind a counter."
+  },
+  "staff:ST1009:VIS_0019": {
+    "confidence": 0.4,
+    "is_staff": false,
+    "reason": "The individual is not wearing a uniform, lanyard, or apron, and is not standing behind a counter."
+  },
+  "staff:ST1009:VIS_0020": {
+    "confidence": 0.6,
+    "is_staff": false,
+    "reason": "no visible uniform, lanyard, or ID badge; not standing behind a counter"
+  },
+  "staff:ST1009:VIS_0021": {
+    "confidence": 0.8,
+    "is_staff": true,
+    "reason": "standing behind a counter with a keyboard"
+  },
+  "staff:ST1009:VIS_0022": {
+    "confidence": 0.8,
+    "is_staff": true,
+    "reason": "The person is wearing a uniform-like red shirt, and appears to have access to a drawer that likely contains store supplies or cash, suggesting they may be a store employee."
+  },
+  "staff:ST1009:VIS_0023": {
+    "confidence": 0.8,
+    "is_staff": true,
+    "reason": "The person appears to be wearing a lanyard, which is commonly used by store employees for ID badges."
+  },
+  "zone:ST1009:ZONE": {
+    "confidence": 0.8,
+    "reason": "The camera appears to be capturing a section with various skincare and beauty products on shelves, which aligns with the skincare aisle.",
+    "zone": "skincare_aisle"
+  }
+}

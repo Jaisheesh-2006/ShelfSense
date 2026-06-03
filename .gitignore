@@ -28,7 +28,18 @@ build/
 *.pt
 *.onnx
 *.weights
-data/
+# Ignore everything under data/ EXCEPT the committed replay artifacts that the default
+# `docker compose up` (the replayer service) depends on: the pre-generated behavioural events and
+# the VLM verdict cache. These are de-identified (visitor tokens, zones, timestamps, is_staff — no
+# faces/PII) and committing them is what makes the one-command demo work on a fresh clone with zero
+# manual steps (ADR-0033). Intermediate/per-store dumps (e.g. store2.jsonl) stay ignored.
+data/*
+!data/events/
+data/events/*
+!data/events/behavior.jsonl
+!data/vlm/
+data/vlm/*
+!data/vlm/*.json
 datasets/
 *.mp4
 *.avi

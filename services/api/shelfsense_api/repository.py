@@ -131,7 +131,7 @@ def latest_event_ms_by_store(session: Session) -> dict[str, int]:
             BehaviorEventRow.store_id
         )
     ).all()
-    return dict(rows)
+    return {row[0]: row[1] for row in rows}
 
 
 def upsert_transactions(session: Session, txns: Iterable[Transaction]) -> int:
@@ -151,9 +151,11 @@ def upsert_transactions(session: Session, txns: Iterable[Transaction]) -> int:
     return count
 
 
-def fetch_transactions(session: Session) -> list[Transaction]:
-    """All POS transactions as domain objects (for conversion + day metrics)."""
-    rows = session.scalars(select(TxnRow)).all()
+def fetch_transactions(session: Session, store_id: str) -> list[Transaction]:
+    """All POS transactions as domain objects (for conversion + day metrics), filtered by store."""
+    rows = session.scalars(
+        select(TxnRow).where(TxnRow.order_id.startswith(f"{store_id}_"))
+    ).all()
     return [
         Transaction(
             transaction_id=r.order_id,

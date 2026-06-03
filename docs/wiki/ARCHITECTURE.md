@@ -12,7 +12,7 @@ actionable* (the API + dashboard).
 
 ```
  Raw CCTV clips (2 stores · ~4 role-named cams each)
-      │  OpenCV samples ~5 fps
+      │  OpenCV samples ~10 fps
       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ DETECTION PIPELINE  (offline/CV; owns all per-person reasoning)       │
@@ -34,15 +34,16 @@ actionable* (the API + dashboard).
 ```
 
 The two tiers share exactly one contract — the **event schema** ([[EVENT_SCHEMA]]). Either side can be
-reworked independently. The whole stack starts with one `docker compose up`.
+reworked independently. The whole stack starts with one `docker compose up --build`.
 
 ## Components & responsibilities
 | Component | Responsibility | Key inputs → outputs |
 |-----------|----------------|----------------------|
-| **Detection pipeline** | Detect people, track them, assign a per-visit `visitor_id` (Re-ID), classify staff, map to zones/direction, compute dwell & queue, **emit behavioural events**. Owns all CV + sessionization. Optionally calls a **VLM (Gemini) offline** for staff + zone classification (ADR-0027) — off by default, heuristic fallback, gate-safe. | CCTV clips → `events.jsonl` + POST to API |
+| **Detection pipeline** | Detect people, track them, assign a per-visit `visitor_id` (Re-ID), classify staff, map to zones/direction, compute dwell & queue, **emit behavioural events**. Owns all CV + sessionization. Optionally calls a **VLM (Groq/Llama)** for staff + zone classification (ADR-0027) — off by default, heuristic fallback, gate-safe. | CCTV clips → `events.jsonl` + POST to API |
 | **Intelligence API** (FastAPI) | Ingest events (idempotent, deduped, partial-success), persist, and compute metrics/funnel/heatmap/anomalies on read. Health + observability. | events → JSON metrics |
 | **PostgreSQL** | Durable store for events + derived metrics; the query surface. | — |
-| **Dashboard** | Show ≥1 metric live as events flow (Part E). | API → screen |
+| **Dashboard** | Show ≥1 metric live as events flow (Part E). Polls all store endpoints. | API → screen |
+| **Replayer** | On `docker compose up --build` (default), replays pre-generated `behavior.jsonl` events into the API. No YOLO, no clips, no keys — data appears in seconds. | events.jsonl → POST /events/ingest |
 | **Prometheus + Grafana** | Process metrics + dashboards (observability). | `/metrics` |
 
 ## API internals (Slice 2.6, ADR-0013)
@@ -59,27 +60,28 @@ Package `shelfsense_api` (renamed from `app` to un-collide with the detector's `
 ## Camera → role mapping (now explicit in the corrected dataset)
 The corrected dataset **names cameras by role** ([[GROUND_TRUTH]] §1), so the mapping is no longer inferred:
 
-- **Store_1** (= the old single store, ST1008): Entry = **CAM 3 - entry** (calibrated footfall line —
-  **footfall only, does not count visitors**: its view is dominated by mall-corridor pass-by; ADR-0011) ·
+- **Store_1** (= the old single store, ST1008): Entry = **CAM 3 - entry** (calibrated entrance line) ·
   Main floor = **CAM 1 - zone + CAM 2 - zone** · Billing = **CAM 5 - billing** (with a calibrated
   **walkable-floor mask** so a wall mirror / backlit display can't be counted as people; ADR-0010). The old
   **CAM 4 stockroom is gone** from the dataset (it was staff-only and empty in-clip — no loss).
-  **Unique visitors are counted from the shopping-floor cams (CAM1/CAM2/CAM5)**; cross-camera overlap is
-  handled by Re-ID de-duplication so one shopper is counted once, and **staff are excluded by their black
-  uniform** (ADR-0009).
-- **Store_2** (ST1009, now processed — ADR-0028): cams **entry 1 / entry 2 / zone / billing_area** (two
-  entrances; 960×1080). Same role mapping; unique visitors from `zone`+`billing` (entry cams = footfall
-  only). Entrance lines are **placeholder-flagged** (no ground truth) and all clips are pinned to **one
-  synthetic day** (their real dates differ); **no POS → conversion N/A**.
+  **Unique visitors are counted from EVERY camera** (Re-ID de-dups a shopper across cameras into one;
+  ADR-0029), gated to solid, store-interior tracks (entrance line + quality gate keep mall pass-by out).
+  Staff are excluded by the **per-store uniform-colour** heuristic (`black` here) and/or the VLM (ADR-0009/0032).
+- **Store_2** (ST1009, processed — ADR-0028/0030): cams **entry 1 / entry 2 / zone / billing_area** (two
+  entrances; 960×1080). Same all-camera counting; both entrance lines are **calibrated** (wood-floor =
+  interior, white strip + mall = outside). Crowd tuning: `reid_max_distance=0.35`, `min_zone_dwell=800ms`.
+  Staff colour = `pink` (+ a VLM uniform hint). Clips normalised to a single clip-start (10-Apr ~20:00);
+  **no POS → conversion N/A**. Pipeline reaches **~23 unique vs 25 ground truth** ([[GROUND_TRUTH]] §1).
 
 ### Pluggable store registry (ADR-0028)
 Stores are **not hardcoded** — each lives in one module under `shelfsense_common.stores`
 (`st1008.py`, `st1009.py`) exposing `STORE_CONFIG`, **auto-discovered** at import (`get_store`,
-`all_stores`). `StoreConfig` carries `clips_dir` (its subfolder under the single CCTV mount) and
-`clip_start_iso` (its synthetic day). The **detector loops every store** with its own
-Re-ID/staff/zone/clip-start; the **API/analytics are per-store** already. **Adding a store = drop a
-`stores/<id>.py` + a clips folder** (recipe in `stores/README.md`) — no change to the loop, analytics,
-API, or compose.
+`all_stores`). `StoreConfig` carries `clips_dir` (subfolder under the single CCTV mount), `clip_start_iso`,
+and **per-store overrides** that fall back to the global defaults: `reid_max_distance`, `min_zone_dwell_ms`,
+`detector_imgsz`, `staff_heuristic_color`, and a VLM `staff_uniform_hint` (ADR-0030/0032). The **detector
+loops every store** with its own Re-ID/staff/zone/clip-start; the **API/analytics are per-store** already.
+**Adding a store = drop a `stores/<id>.py` + a clips folder** (recipe in `stores/README.md`) — no change
+to the loop, analytics, API, or compose.
 
 ## Data flow (one visitor)
 1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).
@@ -89,10 +91,14 @@ API, or compose.
 4. **Behavioural events** — crossing the entrance line → `ENTRY`/`EXIT`; zone presence →
    `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30 s); billing → `BILLING_QUEUE_JOIN`/`ABANDON`.
 5. **Ingest** — events POSTed in batches to `/events/ingest`; deduped by `event_id` (idempotent).
-   **Implemented (Slice 2.8, ADR-0015):** the detector's `HttpEventSink` auto-POSTs as part of its run
-   (a `FanOutSink` also writes the JSONL), so `docker compose up` feeds the API with no manual replay.
+   **Two run modes (ADR-0033):** the **default `docker compose up`** runs the lightweight **`replayer`**,
+   which POSTs the committed `data/events/behavior.jsonl` (no YOLO, no clips, no keys → data in seconds —
+   the acceptance-gate path). The **full detection pipeline is opt-in** (`docker compose --profile detect
+   up` / `DETECTOR_MODE=detect`): the detector runs YOLO over the clips and auto-POSTs via its
+   `HttpEventSink` (ADR-0015), regenerating the committed events.
 6. **Serve** — metrics/funnel/heatmap/anomalies computed from stored events at query time; conversion
-   joins POS via the 5-minute billing-window rule ([[BUSINESS_RULES]]).
+   joins POS via the 5-minute billing-window rule ([[BUSINESS_RULES]]). Transactions are filtered
+   **per store** by the synthesised `order_id` prefix (`<store_id>_<date>_<time>`).
 
 ## Production concerns (first-class)
 - **Idempotency:** `event_id` is the dedup key; re-POSTing a batch is safe (covers the durability a
@@ -105,7 +111,7 @@ API, or compose.
 
 ## Storage
 **PostgreSQL** — makes the DB-down→503 path realistic and reads scale cleanly. SQLite is the documented
-simpler alternative (single-file, fewer containers). See [[DECISIONS]] ADR-0005.
+simpler alternative (single-file, fewer containers) and is used for hermetic unit tests. See [[DECISIONS]] ADR-0005.
 
 ## Why no message broker
 The spec is ingest-centric, and the gate hinges on a clean one-command start. The pipeline writes

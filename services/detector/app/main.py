@@ -8,7 +8,8 @@ tracked person on a customer camera it:
     (the same shopper across cameras / returning collapses to ONE id — ADR-0007/0008),
   - emits ZONE_ENTER / ZONE_DWELL / ZONE_EXIT for the camera's primary zone (ZoneTracker),
   - emits ENTRY / EXIT on the entrance line (CAM3) and REENTRY when a known visitor returns,
-  - flags `is_staff` by DARK-UNIFORM appearance (Brigade staff wear complete black; ADR-0009),
+  - flags `is_staff` via the optional VLM, falling back to a per-store uniform-COLOUR match
+    (black for Store_1, pink for Store_2; ADR-0009/0032/0027),
   - on cameras with a calibrated floor mask (CAM5), drops detections whose foot-point is off the
     walkable floor — mirror reflections / backlit displays at the back (ADR-0010).
 
@@ -113,11 +114,11 @@ def process_camera(
         sig = appearance_signature(image, x, y, w, h)
         prev = sig_sums.get(track_id)
         sig_sums[track_id] = sig if prev is None else prev + sig
-        # 2. Heuristic fallback (measure specific staff uniform colors)
+        # 2. Heuristic fallback: measure match to the store's staff uniform colour
         color_score = measure_uniform_color(
             image, x, y, w, h,
             store.staff_heuristic_color,
-            settings.staff_dark_v_max,
+            settings.staff_uniform_v_max,
         )
         staff.observe(camera.camera_id, track_id, color_score)
 
@@ -325,7 +326,7 @@ def process_store(
         )
     )
     heuristic_staff = StaffClassifier(
-        threshold=settings.staff_darkness_threshold,
+        threshold=settings.staff_uniform_threshold,
         presence_fallback_ms=(
             settings.staff_min_presence_ms if settings.staff_presence_fallback else None
         ),
@@ -477,125 +478,12 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     )
     return {**totals, "unique_visitors": len(emitted_visitors)}
 
-
-def replay_events(settings, log) -> dict[str, int]:
-    """Replay pre-generated events from the JSONL file to the API.
-
-    This is the default mode for `docker compose up`: no YOLO, no CCTV
-    clips, no VLM keys needed. The JSONL is read, each event is POSTed
-    to the API's ``/events/ingest`` endpoint (idempotent), and the
-    dashboard shows data immediately.
-    """
-    import json
-    import time
-    import urllib.request
-
-    events_path = Path(settings.events_jsonl_path)
-    if not events_path.is_file():
-        log.warning(
-            "replay_no_events_file",
-            path=str(events_path),
-            hint="Run the detection pipeline first "
-            "(DETECTOR_MODE=detect) to generate events.",
-        )
-        return {}
-
-    lines = [
-        ln
-        for ln in events_path.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
-    if not lines:
-        log.warning("replay_empty_events", path=str(events_path))
-        return {}
-
-    log.info(
-        "replay_start",
-        events=len(lines),
-        source=str(events_path),
-        target=settings.api_base_url,
-    )
-
-    # Wait for the API to be ready (same pattern as HttpEventSink).
-    api = settings.api_base_url.rstrip("/")
-    healthz = api + "/healthz"
-    deadline = time.monotonic() + settings.ingest_wait_s
-    while True:
-        try:
-            with urllib.request.urlopen(  # noqa: S310
-                healthz, timeout=2,
-            ) as resp:
-                if resp.status == 200:
-                    break
-        except Exception:  # noqa: BLE001
-            pass
-        if time.monotonic() >= deadline:
-            log.warning(
-                "replay_api_not_ready",
-                wait_s=settings.ingest_wait_s,
-            )
-            break
-        time.sleep(1.0)
-
-    # POST events in batches (same batch_size as the live feed).
-    batch_size = settings.ingest_batch_size
-    ingest_url = api + "/events/ingest"
-    posted = 0
-    for start in range(0, len(lines), batch_size):
-        batch = lines[start : start + batch_size]
-        events_json = [json.loads(ln) for ln in batch]
-        body = json.dumps({"events": events_json}).encode("utf-8")
-        req = urllib.request.Request(
-            ingest_url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        for attempt in range(settings.ingest_max_retries + 1):
-            try:
-                with urllib.request.urlopen(  # noqa: S310
-                    req, timeout=10,
-                ) as resp:
-                    result = json.loads(resp.read())
-                    accepted = result.get("accepted", 0)
-                    posted += accepted
-                    log.info(
-                        "replay_batch",
-                        batch=start // batch_size + 1,
-                        accepted=accepted,
-                        duplicates=result.get("duplicates", 0),
-                    )
-                break
-            except Exception as err:  # noqa: BLE001
-                if attempt >= settings.ingest_max_retries:
-                    log.warning(
-                        "replay_batch_failed",
-                        batch=start // batch_size + 1,
-                        error=str(err),
-                    )
-                else:
-                    time.sleep(0.5 * (attempt + 1))
-
-    log.info(
-        "replay_complete",
-        total_events=len(lines),
-        posted_to_api=posted,
-    )
-    return {"total_events": len(lines), "posted": posted}
-
-
 def main() -> None:
     settings = get_settings()
     configure_logging(SERVICE, settings.log_level)
     log = get_logger(SERVICE)
 
-    mode = settings.detector_mode.lower().strip()
-    if mode == "replay":
-        log.info("detector_mode", mode="replay")
-        replay_events(settings, log)
-    else:
-        log.info("detector_mode", mode="detect")
-        run_once(settings, log)
+    run_once(settings, log)
 
     # Recorded clips are finite: idle (healthy) once processed
     # instead of busy-reprocessing.

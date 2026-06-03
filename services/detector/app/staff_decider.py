@@ -1,9 +1,9 @@
 """Staff/customer decision that prefers a VLM verdict, with the heuristic as a fallback (ADR-0027).
 
-`StaffClassifier` (staff.py) decides staff by dark-uniform appearance — accurate for Store_1 (black
-uniforms) but brittle across stores (Store_2 staff wear pink). This decider keeps that classifier as
-a always-available fallback and, when a VLM is configured, overrides it with a per-person
-staff/customer judgement from the model.
+`StaffClassifier` (staff.py) decides staff by a per-store uniform-COLOUR match (black for Store_1,
+pink for Store_2; ADR-0032) — cheap but brittle (a customer in the staff colour is misflagged).
+This decider keeps that classifier as an always-available fallback and, when a VLM is configured,
+overrides it with a per-person staff/customer judgement from the model.
 
 Key behaviours:
   * **Decision unit = the global `visitor_id`.** A person resolved across cameras/re-entries gets
@@ -57,9 +57,9 @@ class StaffDecider:
 
     # --- frame-time inputs (delegated / accumulated) -----------------------------------------
 
-    def observe(self, camera_id: str, track_id: int, darkness: float) -> None:
-        """Fold one frame's dark-uniform score into the heuristic (the fallback signal)."""
-        self._heuristic.observe(camera_id, track_id, darkness)
+    def observe(self, camera_id: str, track_id: int, color_score: float) -> None:
+        """Fold one frame's uniform-colour score into the heuristic (the fallback signal)."""
+        self._heuristic.observe(camera_id, track_id, color_score)
 
     def observe_crop(self, camera_id: str, track_id: int, image: np.ndarray, bbox) -> None:
         """Keep the largest-area person crop per track — the best image to show the VLM."""

@@ -1,21 +1,25 @@
-"""Staff classification by dark-uniform appearance (Slice 2.4b, ADR-0009).
+"""Staff classification by per-store uniform-COLOUR appearance (Slice 2.4b, ADR-0009/0032).
 
-Brigade store staff wear a **complete black uniform** (shirt + trousers); the two genuine customers
-in the clip wear grey and violet. So "is this person dressed head-to-toe in dark clothing?" is a
-strong, cheap discriminator — far better than the earlier presence-time heuristic (ADR-0008/2.4),
-which mislabels any shopper who lingers. We reuse the very crop the Re-ID signature samples; only
-the measurement differs.
+This is the always-available FALLBACK signal; the primary signal is the optional VLM
+(`staff_decider.py` / `vlm.py`, ADR-0027). Staff wear a store-specific uniform colour — Store_1's
+Brigade staff wear a **complete black** uniform, Store_2's staff wear **bright pink** polos — so
+"how much of this person matches the store's staff colour?" is a cheap discriminator, far better
+than the earlier presence-time heuristic (ADR-0008/2.4) which mislabels any shopper who lingers.
+The colour is a **parameter** (`StoreConfig.staff_heuristic_color` → `COLOR_HEURISTICS`), not
+hardcoded to "dark". We reuse the very crop the Re-ID signature samples; only the measurement
+differs.
 
-As with reid.py, pixel extraction (`uniform_darkness`, needs OpenCV) is split from the pure
-decision logic (`dark_fraction`, `StaffClassifier`) so the policy is unit-testable without a model.
+For a "both-halves" colour (e.g. black) we require **both** the upper and lower body to match —
+taking the *min* of the two halves — so a customer with a black jacket over light jeans is not
+misflagged; an "upper" colour (e.g. pink polo) scores the upper body only. We also sample the
+central column of the box to limit dilution from the floor/shelves behind the person.
 
-We require **both** the upper and lower body to be dark (not just a dark top) — taking the *min* of
-the two halves — so a customer with a dark jacket over light jeans is not misflagged. We also sample
-the central column of the box to limit dilution from the (light wood) floor behind the person.
+As with reid.py, pixel extraction (`measure_uniform_color`, needs OpenCV) is split from the pure
+decision logic (`color_fraction`, `StaffClassifier`) so the policy is unit-testable without a model.
 
-Honest limitation (DESIGN Assumptions): on dark evening footage a customer in genuinely black
-clothing would be misflagged. We tune the threshold against ground truth and report the measured
-separation between staff and customers rather than claim precision.
+Honest limitation (DESIGN Assumptions): a customer wearing the staff colour would be misflagged
+(e.g. black clothing on dark evening footage). We tune the threshold against ground truth and
+report the measured separation between staff and customers rather than claim precision.
 """
 
 from __future__ import annotations
@@ -24,9 +28,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# HSV Value (0-255) at or below which a pixel counts as "dark"/near-black. Surfaced as config.
-DARK_V_MAX = 70
-# Fraction of the box width kept (central column) when measuring darkness, to limit background.
+# Fraction of the box width kept (central column) when measuring colour match, to limit background.
 CENTRAL_COLUMN = 0.6
 
 

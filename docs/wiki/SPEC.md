@@ -85,8 +85,8 @@ No customer_id. Correlate by **time window + store**: a visitor present in the *
 the 5-minute window before a transaction timestamp** counts as a **converted** visitor for that
 session. Conversion = converted visitors ÷ unique visitors. (Delivered CSV is 7-col → a **transaction =
 distinct `order_time`** (24 of them), `timestamp` from `order_date`+`order_time` (local, no tz),
-`basket_value` from summing `total_amount` per timestamp; see [[GROUND_TRUTH]] §2. **Note:** the loader
-needs rework for this format.)
+`basket_value` from summing `total_amount` per timestamp; see [[GROUND_TRUTH]] §2. `pos_loader.py`
+has been reworked for this format — ADR-0024/D3.)
 
 ## The 7 edge cases (graded under Part A & C)
 Group entry (count individuals, not groups) · Staff movement (`is_staff`, exclude) · Re-entry

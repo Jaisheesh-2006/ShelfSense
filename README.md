@@ -45,6 +45,19 @@ YOLO model, CCTV clips, or VLM keys required.
 | Prometheus | http://localhost:9090 |
 | Grafana dashboards | http://localhost:3000 |
 
+### API Endpoints (as required by the spec)
+
+All endpoints conform to the challenge specification and are testable via the Swagger UI (`/docs`).
+
+| Endpoint | Purpose |
+|---|---|
+| `POST http://localhost:8000/events/ingest` | Idempotent event ingestion (batch up to 500) |
+| `GET http://localhost:8000/health` | System status and feed freshness (STALE_FEED check) |
+| `GET http://localhost:8000/stores/{id}/metrics` | Core conversion rate, dwell times, and queue depths |
+| `GET http://localhost:8000/stores/{id}/funnel` | Drop-off counts from Entry → Browsed → Queue → Bought |
+| `GET http://localhost:8000/stores/{id}/heatmap` | Zone engagement and relative dwell times |
+| `GET http://localhost:8000/stores/{id}/anomalies` | Queue spikes, conversion drops, and dead zones |
+
 To stop it: `docker compose down` (add `-v` to also clear the database)
 
 ### Run the detection pipeline (re-generate events)
@@ -54,15 +67,15 @@ To re-run the full YOLO + ByteTrack detection over CCTV clips:
 1. **Place CCTV clips** in `docs/raw/Store_CCTV_Clips/` (gitignored).
 2. Run with detect mode:
    ```bash
-   DETECTOR_MODE=detect docker compose up --build
-   ```
-   Or locally (faster iteration, needs `.venv` with deps):
-   ```bash
-   python scripts/run_detection.py
+   docker compose --profile detect up --build
    ```
 3. Events are written to **`data/events/behavior.jsonl`** and auto-POSTed to the API.
-4. To enable VLM staff/zone classification, also set `VLM_ENABLED=true` and
-   a provider key (`GROQ_API_KEY` or `GEMINI_API_KEY`) in a `.env` file.
+4. To enable VLM staff/zone classification, set `VLM_ENABLED=true` and a provider key in a `.env`
+   file. The **default provider is Groq** (multimodal Llama-4 Scout — what we ran), so just set
+   `GROQ_API_KEY=...`. The VLM layer is **pluggable**: to use a different model/provider, set
+   `VLM_PROVIDER` and `VLM_MODEL` (e.g. `VLM_PROVIDER=gemini`, `VLM_MODEL=gemini-2.5-flash-lite`,
+   `GEMINI_API_KEY=...`). The VLM is **optional** — with it off the pipeline uses the per-store
+   uniform-colour staff heuristic, so `docker compose up` never needs a key or network.
 
 ### Tips for reviewers
 
@@ -80,9 +93,15 @@ customer personal data and large video files. To run with real data, place them 
 
 ```
 docs/raw/
-├── CCTV Footage/CCTV Footage/CAM 1.mp4 … CAM 5.mp4   # camera clips
-├── Brigade_Bangalore_*.csv                            # POS sales data
-└── Brigade Road - Store layout*.pdf                   # floor plan
+├── Store_CCTV_Clips/
+│   ├── Store_1/Store 1/   CAM 1 - zone.mp4, CAM 2 - zone.mp4, CAM 3 - entry.mp4,
+│   │                      CAM 5 - billing.mp4, Store 1 - layout.png
+│   └── Store_2/Store 2/   entry 1.mp4, entry 2.mp4, zone.mp4,
+│                          billing_area.mp4, store 2 - layout.png
+├── POS - sample transactions*.csv        # 7-col POS sales (store ST1008 only)
+├── Purplle_Tech_Challenge_PS*.pdf        # problem statement
+├── Assessment  Evaluation Framework*.pdf  # grading rubric
+└── sample_events*.jsonl                   # 13 example events (reference schema)
 ```
 
 ---
@@ -120,13 +139,11 @@ The full design lives in the **wiki** — start at [docs/wiki/README.md](docs/wi
 
 ## Status
 
-🟢 **Phases 1 & 2 complete** — `docker compose up` runs the full stack with one command; the
-detector counts people from the real clips and **auto-feeds** the API, which serves health, metrics,
-funnel, heatmap, and anomaly endpoints (computed from real data, never hardcoded). The **live React
-dashboard** (Part E) is up at http://localhost:8080.
-
-🟡 **Phase 3 in progress** — production hardening (structured-logging fields, coverage push).
-See [docs/wiki/TASKS.md](docs/wiki/TASKS.md).
+🟢 **All phases complete** — `docker compose up --build` runs the full stack with one command; the
+replayer feeds pre-generated events into the API, which serves health, metrics, funnel, heatmap,
+and anomaly endpoints (computed from real data, never hardcoded). The **live React dashboard**
+(Part E) is up at http://localhost:8080. Two stores supported (ST1008, ST1009). 138 unit tests,
+84% code coverage.
 
 ---
 
