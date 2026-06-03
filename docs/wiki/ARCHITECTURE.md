@@ -67,10 +67,19 @@ The corrected dataset **names cameras by role** ([[GROUND_TRUTH]] §1), so the m
   **Unique visitors are counted from the shopping-floor cams (CAM1/CAM2/CAM5)**; cross-camera overlap is
   handled by Re-ID de-duplication so one shopper is counted once, and **staff are excluded by their black
   uniform** (ADR-0009).
-- **Store_2** (NEW, not yet processed): cams **entry 1 / entry 2 / zone / billing_area** (two entrances).
-  Mapping the same roles is mechanical, but the pipeline currently runs **one store**; **multi-store
-  processing + per-store `store_id` tagging is pending** (ADR-0024, [[STATE]]). The API is already per-store
-  (`/stores/{id}/...`), so the serving tier needs no change for a second store.
+- **Store_2** (ST1009, now processed — ADR-0028): cams **entry 1 / entry 2 / zone / billing_area** (two
+  entrances; 960×1080). Same role mapping; unique visitors from `zone`+`billing` (entry cams = footfall
+  only). Entrance lines are **placeholder-flagged** (no ground truth) and all clips are pinned to **one
+  synthetic day** (their real dates differ); **no POS → conversion N/A**.
+
+### Pluggable store registry (ADR-0028)
+Stores are **not hardcoded** — each lives in one module under `shelfsense_common.stores`
+(`st1008.py`, `st1009.py`) exposing `STORE_CONFIG`, **auto-discovered** at import (`get_store`,
+`all_stores`). `StoreConfig` carries `clips_dir` (its subfolder under the single CCTV mount) and
+`clip_start_iso` (its synthetic day). The **detector loops every store** with its own
+Re-ID/staff/zone/clip-start; the **API/analytics are per-store** already. **Adding a store = drop a
+`stores/<id>.py` + a clips folder** (recipe in `stores/README.md`) — no change to the loop, analytics,
+API, or compose.
 
 ## Data flow (one visitor)
 1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).

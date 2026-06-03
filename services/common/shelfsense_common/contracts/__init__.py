@@ -22,7 +22,6 @@ from shelfsense_common.contracts.events import (
 )
 from shelfsense_common.contracts.pos import Transaction
 from shelfsense_common.contracts.zones import (
-    STORE,
     CameraConfig,
     CameraRole,
     EntranceLine,
@@ -55,5 +54,4 @@ __all__ = [
     "FloorRegion",
     "CameraConfig",
     "StoreConfig",
-    "STORE",
 ]

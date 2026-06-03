@@ -76,8 +76,9 @@ services:
       VLM_MODEL: ${VLM_MODEL:-gemini-2.0-flash}
       VLM_CACHE_PATH: /data/vlm/vlm_cache.json
     volumes:
-      # CCTV clips are local-only (gitignored). Mounted read-only for detection.
-      - "./docs/raw/CCTV Footage/CCTV Footage:/data/cctv:ro"
+      # CCTV clips are local-only (gitignored). One mount holds ALL stores; each store config points
+      # at its own subfolder via `clips_dir` (ADR-0028). Mounted read-only for detection.
+      - "./docs/raw/Store_CCTV_Clips:/data/cctv:ro"
       # Emitted events also written here, so the JSONL is inspectable on the host.
       - "./data/events:/data/events"
       # VLM verdict cache (ADR-0027) — persisted so re-runs are free and the cache can be committed.

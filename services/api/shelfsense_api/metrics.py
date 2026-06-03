@@ -11,7 +11,7 @@ from __future__ import annotations
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from shelfsense_common.analytics import compute_store_metrics
 from shelfsense_common.config import get_settings
-from shelfsense_common.contracts import STORE
+from shelfsense_common.stores import DEFAULT_STORE_ID
 from sqlalchemy import func, select
 
 from shelfsense_api.db import BehaviorEventRow, Transaction, get_session
@@ -41,7 +41,8 @@ def refresh_business_gauges() -> None:
         with get_session() as s:
             events_total = s.scalar(select(func.count()).select_from(BehaviorEventRow)) or 0
             txns_total = s.scalar(select(func.count()).select_from(Transaction)) or 0
-            events = fetch_events(s, STORE.store_id)
+            # Headline business gauges reflect the conversion store (the one with POS).
+            events = fetch_events(s, DEFAULT_STORE_ID)
             txns = fetch_transactions(s)
         metrics = compute_store_metrics(
             events,

@@ -252,7 +252,9 @@ What changes vs. our earlier design:
 ---
 
 ## ADR-0011 — The entrance camera contributes footfall only, not zone-visitor counts (Slice 2.4b)
-- **Date:** 2026-06-01 · **Status:** Accepted (user decision; refines ADR-0007)
+- **Date:** 2026-06-01 · **Status:** Accepted (user decision; refines ADR-0007) — **later refined by
+  ADR-0029** (we now DO count interior visitors on the entrance cam, filtered by the entrance line +
+  quality gate, instead of excluding the camera wholesale).
 - **Context:** After staff exclusion the pipeline still reported **5 customers, not 2**. The 3 extras were
   **entrance(CAM3)-only** visitors — the dark-uniform diagnostic frame shows them clearly: people walking
   the **mall corridor outside the glass** (the ADR-0006 hazard), plus in-store people whose darkness is
@@ -802,3 +804,142 @@ What changes vs. our earlier design:
   [[RISKS]].
 - **Validated:** ruff + `ruff format` clean; **138 tests** (+22 `test_vlm.py`, fake client, no
   network); detector imports clean. The live two-store run is **pending the user's API key**.
+
+## ADR-0028 — Pluggable multi-store registry (drop-in store onboarding)
+- **Date:** 2026-06-03 · **Status:** Accepted (user request) — Store_2 (ST1009) processing + a
+  config-driven design so a new store is hassle-free to add.
+- **Context:** The detector was hardwired to a single `STORE` constant (ST1008) in `contracts/zones.py`,
+  and the corrected dataset (a) renamed Store_1's clips (`CAM 1 - zone.mp4` …) and moved them under
+  `Store_CCTV_Clips/Store_1/Store 1/`, and (b) added **Store_2** (`Store_2/Store 2/`: `entry 1`,
+  `entry 2`, `zone`, `billing_area`, 960×1080). So the existing paths were already stale, and we
+  needed a *second* store — ideally with a design where future stores "just drop in".
+- **Decision:** make stores a **pluggable, auto-discovered registry** (`shelfsense_common.stores`):
+  - Each store is **one module** exposing `STORE_CONFIG: StoreConfig` (`st1008.py`, `st1009.py`); the
+    package **auto-discovers** every such module at import (`get_store`, `all_stores`, `store_ids`,
+    `DEFAULT_STORE_ID`). Adding a store = **drop a file + put clips in a folder** (+ optional `STORES`
+    entry for the switcher). Recipe in `stores/README.md`.
+  - `StoreConfig` gains **`clips_dir`** (per-store subfolder under ONE CCTV mount) and
+    **`clip_start_iso`** (per-store synthetic day). Compose now mounts `./docs/raw/Store_CCTV_Clips`
+    once; each store points at its own subfolder.
+  - The detector loops `all_stores()`, each with its **own Re-ID gallery / visitor registry / staff
+    decider / zone resolution / clip start**; events are tagged with the right `store_id`. Analytics
+    `monitored_customer_zones(store_id)` + `detect_anomalies(store_id=...)` are now per store; the API
+    router passes the path id. `STORE` constant removed; the ~4 call-sites use the registry.
+  - **Store_2 specifics:** id **ST1009**; two entrances; unique visitors from `zone`+`billing` (entry
+    cams = footfall only, as ADR-0011); entrance lines are **placeholders (`calibrated=False`)** — no
+    ground truth; all clips pinned to **one synthetic day** (their real dates differ); **no POS →
+    conversion N/A**. VLM (ADR-0027) supplies cross-store staff + zone labels.
+- **Why Python registry over JSON config:** ships automatically with the package (no `package-data`
+  risk that could break the reviewer's `docker compose up` — the gate is paramount), Pydantic-validated
+  at import, and keeps the calibration rationale inline. A `.py` drop-in is as easy as JSON here.
+- **Alternatives:** (a) keep the single `STORE` + branch on store_id — rejected (not pluggable,
+  scatters store logic); (b) JSON/YAML config files — rejected for the packaging/gate risk above
+  (revisit if non-engineers must add stores); (c) one detector container per store — rejected (heavier
+  ops than one loop over the registry for this scale).
+- **Trade-offs / notes:** Store_2 numbers are **approximate** (placeholder calibration, no ground
+  truth) — surfaced honestly (DESIGN A14). Cross-store Re-ID is intentionally **isolated per store**
+  (a visitor isn't shared across stores). Prometheus headline gauges stay on the conversion store
+  (ST1008). See [[ARCHITECTURE]], [[STATE]], [[TASKS]].
+- **Validated:** ruff + `ruff format` clean; **144 tests** (+6 `test_stores.py`); registry discovers
+  ST1008+ST1009; detector + API import clean; per-store monitored zones correct. The live two-store
+  generation run is **pending the user's `GEMINI_API_KEY`** (then commit events + VLM cache).
+
+## ADR-0029 — Count unique visitors across all cameras, gated by quality + the entrance line
+- **Date:** 2026-06-03 · **Status:** Accepted (user request) — **refines ADR-0011** (which excluded
+  the entrance camera from visitor counts).
+- **Context:** ADR-0011 counted unique visitors only from the shopping-floor cameras, excluding the
+  entrance camera entirely, because its view is dominated by **mall-corridor pass-by**. The user wants
+  a more principled rule: **count people seen on *any* camera** (Re-ID-deduped), but **only if we're
+  confident they're a real, distinct shopper inside the store** — discard the noise. They proposed
+  "count only if the face is visible"; on inspection that fails for **this** footage (steep overhead
+  CCTV → faces are mostly top/back-of-head, shoppers face the shelves, and some faces are
+  **privacy-blurred**), so a face gate would discard most genuine visitors. Agreed instead on a
+  **track-quality + geometry** gate.
+- **Decision:** a detection contributes to the unique-visitor count only as a **solid track**:
+  - **Sustained presence** — already via `min_zone_dwell` (filters brief pass-through).
+  - **On the walkable floor** — `FloorRegion` mask where calibrated (drops reflections/wall displays).
+  - **Large-enough box** — new `min_detection_box_frac` gate (`app/gating.py`) drops tiny far/
+    reflection blobs (e.g. mall pedestrians seen small through the storefront glass).
+  - **Store-interior only** — on any camera with an `entrance_line`, only detections on the **inside**
+    of the line feed the zone/visitor count; the corridor side (pass-by) is dropped. The crossing
+    detector still sees both sides so it can detect entries.
+  Concretely: **every camera now runs a zone tracker** (the entrance cam too), so the entrance
+  contributes **interior** visitors — not just line crossings — without re-admitting the corridor
+  traffic ADR-0011 warned about. Re-ID de-dups a shopper seen on several cameras into one visitor.
+- **Why face-gating was rejected (evidence):** Store_1 frames — billing/aisle shoppers face away
+  (backs of heads), one aisle face is **blur-redacted**; Store_2 entrants face the glass. A literal
+  "face visible ⇒ count, else discard" rule would collapse the denominator and distort conversion.
+  Track-quality + the entrance line achieve the same *intent* (count only real, interior shoppers)
+  while working with these camera angles.
+- **Alternatives:** (a) keep ADR-0011 (entrance excluded) — rejected (the user wants all cams,
+  deduped); (b) strict face gate — rejected (undercounts badly on blurred/overhead footage);
+  (c) per-camera floor polygons everywhere — deferred (only CAM5 is calibrated; the entrance line +
+  box-size gate cover the rest).
+- **Trade-offs / notes:** the entrance now appears as a zone in the heatmap (interior entrance dwell) —
+  honest, and excluded from dead-zone (`monitored_customer_zones` skips ENTRANCE-role zones). The
+  box-size threshold is **config** (`MIN_DETECTION_BOX_FRAC`, default 0.0015) and the **Store_1
+  customer count must be re-validated on the next full detector run** — this changes the counting path
+  and can't be re-checked without running YOLO. See [[BUSINESS_RULES]], DESIGN A8.
+- **Validated:** pure gate logic unit-tested (`test_gating.py`, +4); ruff + `ruff format` clean;
+  **148 tests**; detector imports clean. Real-count re-validation pending a full run.
+
+## ADR-0030 — Per-store density tuning; Store_2 calibrated to ground truth; VLM free-tier limit
+- **Date:** 2026-06-03 · **Status:** Accepted (user request) — actually run the full pipeline on
+  Store_2 (ST1009) and reach the user's ground truth (**22 customers + 3 staff**).
+- **Context:** A first Store_2 run gave **6 unique people vs 25** — a 4× undercount. Diagnosis
+  (`too_small=0`, `off_floor=0`) ruled out the quality gates; the cause was **Re-ID over-merging**:
+  the global `reid_max_distance=0.55` + `min_zone_dwell=2000` were tuned for Store_1's **2-customer**
+  clip, and they collapse a **22-customer crowd** into a handful of identities (2–3 per camera).
+- **Decision:** make density tuning **per-store** (new optional `StoreConfig.reid_max_distance` /
+  `min_zone_dwell_ms`, falling back to global Settings). A busy store gets a stricter Re-ID distance
+  (less merging) + shorter dwell. A sweep against ground truth: **0.55→6, 0.35→20, 0.30→23, 0.25→37**
+  unique. Baked **ST1009 = 0.30 / 800 ms → 23 unique** (≈25; per-camera BILLING=6, ENTRY1=5,
+  ENTRY2=8, ZONE=7, all consistent with the user's per-camera flows). **Store_1 keeps 0.55 / 2000**
+  (its own ground truth), so the two stores no longer share one calibration. Also **calibrated the
+  two Store_2 entrance lines** from grid-overlaid frames (wood-floor interior vs mall corridor) and a
+  single-store runner (`scripts/run_detection.py --store`, `ENABLED_STORES`).
+- **VLM staff-ID — blocked by free-tier quota (key finding):** the model works
+  (**`gemini-2.5-flash-lite`**; `gemini-2.0-flash` has a 0-quota free tier on this key,
+  `gemini-1.5-flash` is deprecated), but the free tier is **20 requests/day**. Store_2 has **23
+  visitors + 1 zone call > 20/day**, so all VLM calls 429'd and fell back to the heuristic. The
+  staff/customer split (3/20) is therefore **heuristic, not VLM** — coincidentally near 3/22 but
+  the identities are unreliable for Store_2's **pink** staff. Proper VLM staff-ID needs **billing**,
+  or a **batched** classifier (multiple crops per call → fits ~20/day), or waiting for daily reset
+  (still < 24). VLM model default updated to `gemini-2.5-flash-lite`.
+- **Alternatives:** (a) one global Re-ID threshold — rejected (Store_1 and Store_2 need different
+  values); (b) chase exactly 25 by lowering Re-ID further — rejected (23 is 92% of a hand-count;
+  lower risks fragmentation/overfitting). (c) bump sample fps — deferred (0.30/800 already lands ~23).
+- **Trade-offs / notes:** 23 vs 25 is an honest ~8% undercount from weak colour-histogram Re-ID on a
+  dense crowd; a learned Re-ID embedding would close it further (future work). Store_2 numbers are
+  approximate (no per-person ground truth, placeholder→now-calibrated lines). See [[GROUND_TRUTH]],
+  [[STATE]], DESIGN A14.
+- **Validated:** baked config reproduces **23 (20+3)** from `STORE_CONFIG` alone (no env);
+  ruff + `ruff format` clean; **148 tests**; events written to `data/events/store2.jsonl`.
+
+## ADR-0031 — Multi-provider VLM: add Groq (Llama-4 Scout) alongside Gemini
+- **Date:** 2026-06-03 · **Status:** Accepted (user request) — unblock Store_2 VLM staff-ID, which
+  ADR-0030 left stuck on Gemini's free-tier 20-req/day cap.
+- **Context:** Gemini's free tier (20/day) can't classify Store_2's 23 visitors. The user supplied a
+  **Groq** key + `meta-llama/llama-4-scout-17b-16e-instruct` (a multimodal model with a far more
+  generous free tier).
+- **Decision:** make the VLM **provider-pluggable**. Refactored `vlm.py` to a `_BaseVLMClient` (shared
+  prompts + JSON parsing over an abstract `_generate`) with `GeminiVLMClient` and a new
+  **`GroqVLMClient`** (OpenAI-style chat API, images as base64 data URLs, lazy `groq` import). A
+  `_PROVIDERS` registry maps `vlm_provider` → (client, key-attr, pip-hint); `build_vlm_client` branches
+  on it. Added `GROQ_API_KEY` config. No JSON-mode flag for Groq (vision models don't all support it) —
+  `extract_json` already tolerates fenced/prose replies.
+- **Result:** with `VLM_PROVIDER=groq`, the full Store_2 run made **23 staff calls + 1 zone call, 0
+  failures**. Staff (VLM, not heuristic): **4 staff / 19 customers** (vs ground truth 3/22); zone cam
+  relabelled `makeup_aisle → skincare_aisle`. So the VLM genuinely does the staff/zone judgement now,
+  generalising past the dark-uniform heuristic that can't see Store_2's pink staff.
+- **Alternatives:** (a) Gemini billing — works but needs the user's billing setup; (b) batched Gemini
+  calls — more code, still rate-limited; (c) Groq free tier — chosen (cleared 24 calls immediately).
+  Keeping **both** providers is the durable win (swap via `VLM_PROVIDER`).
+- **Trade-offs / notes:** still off by default + cached, so the gate stays network-free. The count
+  (~23 vs 25) is unchanged (provider only affects staff/zone labels, not detection/Re-ID). **Honest
+  limit:** staff-vs-customer is **crop-sensitive and low-confidence** on steep overhead CCTV (4 staff
+  on first-emit crops, 1 on largest-crop, vs GT 3) — the angle hides uniforms/lanyards/pink, so this
+  is a *camera* limitation, not a model/quota one. Total headcount is the trustworthy output; the
+  split is approximate. Proof images under `docs/wiki/frames/`. See [[GROUND_TRUTH]], DESIGN A13/A14.
+- **Validated:** Groq smoke call returns valid verdicts; full run 23/0 calls; ruff + `ruff format`
+  clean; **148 tests**; `data/events/store2.jsonl` regenerated with VLM staff labels.

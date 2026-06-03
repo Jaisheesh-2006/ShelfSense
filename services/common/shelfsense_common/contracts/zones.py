@@ -108,6 +108,21 @@ class StoreConfig(BaseModel):
     store_id: str
     store_name: str
     cameras: list[CameraConfig] = Field(default_factory=list)
+    # Where this store's clips live, RELATIVE to the detector's CCTV mount (`CCTV_DIR`). One mount
+    # holds every store; each store points at its own subfolder, so a store needs no new mount.
+    clips_dir: str = ""
+    # Store-local wall-clock start of the clips (ISO-8601). A store's clips are treated as one
+    # synchronised window starting here, turning per-frame media time into absolute UTC timestamps.
+    # None → fall back to the global `CLIP_START_ISO`. For stores whose real clips span different
+    # days (e.g. Store_2), this pins them to ONE synthetic day so daily metrics read sensibly.
+    clip_start_iso: str | None = None
+    # Optional store-specific staff-uniform hint for the VLM (e.g., "staff wear pink shirts").
+    staff_uniform_hint: str | None = None
+    # Per-store density tuning (None → global Settings default). A busy store needs a STRICTER Re-ID
+    # distance (less merging) + a SHORTER dwell than a quiet one; per-store keeps one store's
+    # calibration from disturbing another's (ADR-0030).
+    reid_max_distance: float | None = None
+    min_zone_dwell_ms: int | None = None
 
     def camera(self, camera_id: str) -> CameraConfig | None:
         return next((c for c in self.cameras if c.camera_id == camera_id), None)
@@ -116,74 +131,12 @@ class StoreConfig(BaseModel):
     def entrance_camera(self) -> CameraConfig | None:
         return next((c for c in self.cameras if c.role is CameraRole.ENTRANCE), None)
 
+    @property
+    def customer_cameras(self) -> list[CameraConfig]:
+        """Cameras whose detections count as customers (excludes staff-only areas)."""
+        return [c for c in self.cameras if c.is_customer_area]
 
-# Canonical store config for Brigade_Bangalore (ST1008), matching the "Current" floor plan.
-STORE = StoreConfig(
-    store_id="ST1008",
-    store_name="Brigade_Bangalore",
-    cameras=[
-        CameraConfig(
-            camera_id="CAM1",
-            file="CAM 1.mp4",
-            role=CameraRole.PRODUCT,
-            primary_zone=ZoneName.SKINCARE_AISLE,
-            fps=29.97,
-        ),
-        CameraConfig(
-            camera_id="CAM2",
-            file="CAM 2.mp4",
-            role=CameraRole.PRODUCT,
-            primary_zone=ZoneName.MAKEUP_AISLE,
-            fps=29.97,
-        ),
-        CameraConfig(
-            camera_id="CAM3",
-            file="CAM 3.mp4",
-            role=CameraRole.ENTRANCE,
-            primary_zone=ZoneName.ENTRANCE,
-            fps=29.97,
-            # Entrance line along the front edge of the retail wood floor, by the centre glass
-            # partition where the real doorway is (user-confirmed). NOTE: an earlier Slice 2.2
-            # attempt moved this onto the RIGHT-side corridor chasing heavy foot traffic there —
-            # but that corridor is the MALL walkway (pass-by, not store entries), so it was
-            # reverted (ADR-0006). Real store entries cross here, centre-left; the dense right-side
-            # motion must NOT be counted as footfall. inside_sign=-1 → the wood-floor side is
-            # inside. See GROUND_TRUTH §1.
-            entrance_line=EntranceLine(
-                x1=320, y1=490, x2=1140, y2=415, inside_sign=-1, calibrated=True
-            ),
-        ),
-        CameraConfig(
-            camera_id="CAM4",
-            file="CAM 4.mp4",
-            role=CameraRole.STOCKROOM,
-            primary_zone=ZoneName.STOCKROOM,
-            fps=24.98,
-            is_customer_area=False,
-        ),
-        CameraConfig(
-            camera_id="CAM5",
-            file="CAM 5.mp4",
-            role=CameraRole.CHECKOUT,
-            primary_zone=ZoneName.CHECKOUT,
-            fps=24.98,
-            # Walkable shopping floor at the checkout. Excludes the BACK DOORWAY (top-centre) and
-            # the backlit ACCESSORIES display / mirror band (right) — detections there are
-            # reflections / partial people at the back threshold, not shoppers on the floor
-            # (Slice 2.4b diagnostic: phantom tracks had foot-points at y~220, off the floor).
-            # Calibrated via scripts/calibrate_floor.py. See GROUND_TRUTH §1 / ADR-0010.
-            floor_region=FloorRegion(
-                vertices=[
-                    (120, 1080),
-                    (1310, 1080),
-                    (1330, 700),
-                    (1180, 460),
-                    (740, 400),
-                    (430, 470),
-                    (170, 760),
-                ],
-                calibrated=True,
-            ),
-        ),
-    ],
-)
+
+# NOTE: concrete store configs live in the pluggable `shelfsense_common.stores` package (one file
+# per store, auto-discovered) — NOT here. This module defines only the *models* (ADR-0028). To add a
+# store, drop a `stores/<id>.py` exposing `STORE_CONFIG = StoreConfig(...)`; nothing here changes.

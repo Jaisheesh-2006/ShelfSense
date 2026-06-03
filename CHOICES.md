@@ -219,3 +219,38 @@ heuristic as both fallback and a baseline to compare the VLM against.
 **Trade-off / when we'd revisit.** VLM replies are non-deterministic — mitigated by temperature 0 +
 caching + committed events. It adds `google-genai` to the detector image (lazy-used). If volume grew,
 we'd batch crops per call or distil the verdicts into a small local classifier.
+
+## Decision 8 — Multi-store: a pluggable, auto-discovered store registry
+
+**Context.** The corrected dataset added a second store and renamed/moved the first store's clips. The
+detector was hardwired to a single `STORE` constant. The brief: support Store_2 **and** make adding any
+future store hassle-free ("drop in footage + details").
+
+**Options considered.**
+- (a) Keep one `STORE` and branch on `store_id` throughout — fastest, but scatters store logic and
+  isn't pluggable.
+- (b) **JSON/YAML store config files** loaded from a directory — very config-driven, but risks the
+  acceptance gate (Python packaging must ship the data files; a missed `package-data` stanza → the
+  reviewer's `pip install`/`docker compose up` crashes).
+- (c) **A Python registry**: one module per store exposing `STORE_CONFIG`, **auto-discovered** at
+  import; the detector loops `all_stores()`.
+
+**What the AI suggested.** It flagged that the gate is paramount (option b's packaging risk could fail
+the whole submission), and that a `.py` drop-in is *as easy* as JSON here while shipping automatically
+with the package and being Pydantic-validated. It recommended (c), with a `README` recipe and a single
+CCTV mount where each store declares its own `clips_dir`.
+
+**Decision.** **(c).** `shelfsense_common.stores` auto-discovers one module per store. `StoreConfig`
+gained `clips_dir` (subfolder under one mount) and `clip_start_iso` (per-store synthetic day). The
+detector loops every store with its own Re-ID/staff/zone/clip-start; analytics + API are per-store.
+**Adding a store = drop `stores/<id>.py` + a clips folder** — no edits to the loop, analytics, API, or
+compose. Store_2 (ST1009) is the first store onboarded this way.
+
+**Why.** It makes "a new store arrives" a config drop-in (open/closed), keeps the gate robust (pure
+Python ships automatically), and preserves the calibration rationale inline. The registry is a pure,
+deterministic function of the files present — trivially testable.
+
+**Trade-off / when we'd revisit.** Store_2's calibration is approximate (no ground truth) and it has no
+POS (conversion N/A) — surfaced as assumptions, not hidden. If non-engineers ever need to add stores,
+we'd add an optional JSON-config loader on top (env-pointed dir), keeping the bundled Python defaults as
+the gate-safe fallback.

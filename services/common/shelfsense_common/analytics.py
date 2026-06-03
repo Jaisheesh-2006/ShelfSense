@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from shelfsense_common.contracts import (
-    STORE,
     BehaviorEvent,
     BehaviorEventType,
     CameraRole,
@@ -36,6 +35,7 @@ from shelfsense_common.conversion import (
     correlate_conversions,
     pos_day_metrics,
 )
+from shelfsense_common.stores import DEFAULT_STORE_ID, get_store
 
 # Funnel stage keys, in spec order (Entry -> Zone Visit -> Billing Queue -> Purchase).
 STAGE_ENTRY = "entry"
@@ -60,11 +60,7 @@ _ZONE_EVENT_TYPES = {
 
 def _is_customer_zone_event(e: BehaviorEvent, customers: set[str]) -> bool:
     """A zone event (with a zone) made by a non-staff customer."""
-    return (
-        e.event_type in _ZONE_EVENT_TYPES
-        and e.zone_id is not None
-        and e.visitor_id in customers
-    )
+    return e.event_type in _ZONE_EVENT_TYPES and e.zone_id is not None and e.visitor_id in customers
 
 
 def staff_visitor_ids(events: Iterable[BehaviorEvent]) -> set[str]:
@@ -289,15 +285,19 @@ def _customer_visitors_by_zone(
     return by_zone
 
 
-def monitored_customer_zones() -> set[str]:
+def monitored_customer_zones(store_id: str = DEFAULT_STORE_ID) -> set[str]:
     """Customer-facing zones a camera actually covers (excludes the entrance + the staff stockroom).
 
     These are the zones a *dead-zone* anomaly can reason about — we only know a zone is empty if a
-    camera watches it. Derived from `STORE` config, so it tracks the layout, not a constant.
+    camera watches it. Derived from the store's config (registry), tracking the layout per store,
+    not a constant. An unknown store id yields an empty set (no zones to assert silence on).
     """
+    store = get_store(store_id)
+    if store is None:
+        return set()
     return {
         cam.primary_zone.value
-        for cam in STORE.cameras
+        for cam in store.cameras
         if cam.is_customer_area and cam.role is not CameraRole.ENTRANCE
     }
 
@@ -328,9 +328,7 @@ def compute_heatmap(
     return Heatmap(zones=zones, data_confidence=confidence)
 
 
-def feed_status(
-    last_event_ms: int | None, reference_ms: int, stale_minutes: int
-) -> FeedStatus:
+def feed_status(last_event_ms: int | None, reference_ms: int, stale_minutes: int) -> FeedStatus:
     """Decide whether a store's feed is stale, given a reference clock (pure).
 
     `reference_ms` is recording-relative (latest ingested event) or wall-clock — the caller chooses.
@@ -348,6 +346,7 @@ def detect_anomalies(
     events: Iterable[BehaviorEvent],
     transactions: Iterable[Transaction],
     *,
+    store_id: str = DEFAULT_STORE_ID,
     store_tz: str = "Asia/Kolkata",
     window_ms: int = DEFAULT_WINDOW_MS,
     low_sample_threshold: int = DEFAULT_LOW_SAMPLE,
@@ -422,13 +421,14 @@ def detect_anomalies(
 
     # 3) Dead zone — needs at least `dead_zone_minutes` of observed history to assert silence.
     anomalies.extend(
-        _dead_zone_anomalies(events, store_tz, dead_zone_minutes, open_hour, close_hour)
+        _dead_zone_anomalies(events, store_id, store_tz, dead_zone_minutes, open_hour, close_hour)
     )
     return anomalies
 
 
 def _dead_zone_anomalies(
     events: list[BehaviorEvent],
+    store_id: str,
     store_tz: str,
     dead_zone_minutes: int,
     open_hour: int,
@@ -467,7 +467,7 @@ def _dead_zone_anomalies(
         last_visit[e.zone_id] = max(last_visit.get(e.zone_id, 0), ts_ms)  # type: ignore[index]
 
     dead: list[Anomaly] = []
-    for zone in sorted(monitored_customer_zones()):
+    for zone in sorted(monitored_customer_zones(store_id)):
         seen = last_visit.get(zone)
         if seen is not None and (reference_ms - seen) <= horizon_ms:
             continue

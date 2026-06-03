@@ -42,10 +42,12 @@ class Settings(BaseSettings):
 
     # --- Detector ---
     yolo_model: str = "yolov8n.pt"
-    detection_confidence: float = 0.35  # validated on CAM3 corridor traffic (Slice 2.2)
+    detection_confidence: float = 0.30  # lower conf to recover close/partial boxes in crowded frames
+    detection_iou: float = 0.85  # higher IoU keeps nearby boxes (helps split adjacent people)
     person_class_id: int = 0  # COCO 'person'
     cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
     enabled_cameras: str = ""  # CSV of camera_ids to process (empty = all customer cameras)
+    enabled_stores: str = ""  # CSV of store_ids to process (empty = all registered stores)
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
     detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
@@ -55,12 +57,18 @@ class Settings(BaseSettings):
     # detector's CPU wall-time so a full pass fits the reviewer's window; the tuned track_buffer
     # bridges the wider inter-frame gaps. Speed/accuracy trade — re-validate the unique-customer
     # count (=2 on this clip) after changing it.
-    tracker_sample_fps: float = 5.0
-    # YOLO inference image size, longest side (ADR-0019). Lowered 640->480: ~1.6x faster per frame
-    # on CPU for a small accuracy cost; must be a multiple of 32 (stride). Re-validate detections.
-    detector_imgsz: int = 480
+    tracker_sample_fps: float = 10.0
+    # YOLO inference image size, longest side. Higher = better separation in crowded frames, slower.
+    # Must be a multiple of 32 (stride). Offline runs trade time for accuracy.
+    detector_imgsz: int = 640
     tracker_cfg: str = "bytetrack_shelfsense.yaml"  # tuned ByteTrack (less fragmentation)
     crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
+    # Counting quality gate (ADR-0029): a person counts toward visitors only as a SOLID track —
+    # sustained presence (min_zone_dwell), on the walkable floor (floor_region where calibrated),
+    # and a large-enough box (drops tiny far/reflection blobs). Mall pass-by is additionally
+    # discarded by the entrance line (only store-interior detections feed the count). Value = box
+    # area as a fraction of frame area; 0 disables it. Conservative default; re-validate on a run.
+    min_detection_box_frac: float = 0.0015
     events_jsonl_path: str = "/data/events/behavior.jsonl"  # where the pipeline writes events
     # Detector -> API auto-feed (Slice 2.8, ADR-0015): the detector POSTs its events straight to the
     # API so `docker compose up` populates the endpoints with no manual replay. Idempotent ingest
@@ -118,9 +126,13 @@ class Settings(BaseSettings):
     # the reviewer's run makes ZERO API calls. When enabled but the SDK/key is missing or a call
     # fails, the pipeline logs and falls back to the heuristic — the VLM never breaks the gate.
     vlm_enabled: bool = False  # master switch; True only for the offline pre-generation run
-    vlm_provider: str = "gemini"  # only "gemini" implemented today
+    vlm_provider: str = "gemini"  # "gemini" or "groq" (Groq hosts multimodal Llama-4, etc.)
     gemini_api_key: str = ""  # SECRET — supplied via env/.env, never committed
-    vlm_model: str = "gemini-2.0-flash"  # any fast multimodal Gemini model; override via VLM_MODEL
+    groq_api_key: str = ""  # SECRET — used when vlm_provider="groq"; never committed
+    # Fast multimodal Gemini model. Default to *-flash-lite (broad free-tier access); 2.0-flash had
+    # a 0-quota free tier on the test key. Override via VLM_MODEL; list models with models.list() on
+    # 404/429. NOTE: free tier is only ~20 requests/day — a busy store needs billing or batching.
+    vlm_model: str = "gemini-2.5-flash-lite"
     vlm_classify_staff: bool = True  # use the VLM for staff/customer (else heuristic only)
     vlm_classify_zone: bool = True  # use the VLM to label camera zones (else static primary_zone)
     # Confidence floors: below these the VLM verdict is ignored and we keep the heuristic / static

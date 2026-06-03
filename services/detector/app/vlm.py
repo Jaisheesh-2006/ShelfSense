@@ -195,13 +195,36 @@ class JsonFileCache:
         tmp.replace(self.path)
 
 
-# --- Gemini client ---------------------------------------------------------------------------
+# --- Clients ---------------------------------------------------------------------------------
 
 
-class GeminiVLMClient:
-    """Calls Google Gemini for staff/zone classification. The SDK is imported lazily in __init__
-    so importing this module never requires `google-genai`. Constructing it WILL require the SDK +
-    a key (callers use `build_vlm_client`, which guards both)."""
+class _BaseVLMClient:
+    """Shared classify_* logic over an abstract `_generate(image, prompt, *extra) -> str`.
+
+    Subclasses implement `_generate` for one provider; the staff/zone prompts + parsing are common,
+    so adding a provider is just a new `_generate`.
+    """
+
+    def _generate(self, image_bgr: np.ndarray, prompt: str, *extra_images: np.ndarray) -> str:
+        raise NotImplementedError
+
+    def classify_staff(self, image_bgr: np.ndarray) -> StaffVerdict:
+        return parse_staff_reply(self._generate(image_bgr, STAFF_PROMPT))
+
+    def classify_zone(
+        self,
+        image_bgr: np.ndarray,
+        candidate_zones: list[str],
+        floor_plan_bgr: np.ndarray | None = None,
+    ) -> ZoneVerdict:
+        prompt = build_zone_prompt(candidate_zones)
+        extra = (floor_plan_bgr,) if floor_plan_bgr is not None else ()
+        return parse_zone_reply(self._generate(image_bgr, prompt, *extra), candidate_zones)
+
+
+class GeminiVLMClient(_BaseVLMClient):
+    """Calls Google Gemini. The SDK is imported lazily in __init__, so importing this module never
+    requires `google-genai`; constructing it does (via `build_vlm_client`, which guards it)."""
 
     def __init__(
         self,
@@ -215,7 +238,6 @@ class GeminiVLMClient:
         from google import genai  # lazy: only needed when the VLM is actually enabled
         from google.genai import types
 
-        self._genai = genai
         self._types = types
         self._client = genai.Client(api_key=api_key)
         self._model = model
@@ -248,18 +270,58 @@ class GeminiVLMClient:
                     time.sleep(0.5 * (attempt + 1))
         raise RuntimeError(f"Gemini call failed after retries: {last_err}") from last_err
 
-    def classify_staff(self, image_bgr: np.ndarray) -> StaffVerdict:
-        return parse_staff_reply(self._generate(image_bgr, STAFF_PROMPT))
 
-    def classify_zone(
+class GroqVLMClient(_BaseVLMClient):
+    """Calls a Groq-hosted multimodal model (OpenAI-style chat API) — e.g. Llama-4 Scout. SDK is
+    lazily imported. Images go as base64 data URLs; the prompt asks for JSON, parsed by
+    `extract_json` (no JSON-mode flag — Groq vision models don't all support it)."""
+
+    def __init__(
         self,
-        image_bgr: np.ndarray,
-        candidate_zones: list[str],
-        floor_plan_bgr: np.ndarray | None = None,
-    ) -> ZoneVerdict:
-        prompt = build_zone_prompt(candidate_zones)
-        extra = (floor_plan_bgr,) if floor_plan_bgr is not None else ()
-        return parse_zone_reply(self._generate(image_bgr, prompt, *extra), candidate_zones)
+        api_key: str,
+        model: str,
+        *,
+        timeout_s: float = 30.0,
+        max_retries: int = 2,
+        temperature: float = 0.0,
+    ) -> None:
+        from groq import Groq  # lazy: only needed when provider=groq
+
+        self._client = Groq(api_key=api_key, timeout=timeout_s)
+        self._model = model
+        self._max_retries = max_retries
+        self._temperature = temperature
+
+    def _generate(self, image_bgr: np.ndarray, prompt: str, *extra_images: np.ndarray) -> str:
+        import base64
+
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for img in (image_bgr, *extra_images):
+            b64 = base64.b64encode(encode_jpeg(img)).decode("ascii")
+            content.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+            )
+        last_err: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "user", "content": content}],
+                    temperature=self._temperature,
+                )
+                return resp.choices[0].message.content or ""
+            except Exception as err:  # noqa: BLE001 — transient API errors; retry then propagate
+                last_err = err
+                if attempt < self._max_retries:
+                    time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(f"Groq call failed after retries: {last_err}") from last_err
+
+
+# provider -> (client class, api-key settings attr, pip hint)
+_PROVIDERS: dict[str, tuple[type[_BaseVLMClient], str, str]] = {
+    "gemini": (GeminiVLMClient, "gemini_api_key", "pip install google-genai"),
+    "groq": (GroqVLMClient, "groq_api_key", "pip install groq"),
+}
 
 
 def build_vlm_client(settings, log) -> VLMClient | None:
@@ -267,25 +329,30 @@ def build_vlm_client(settings, log) -> VLMClient | None:
 
     Returns ``None`` (logging the reason) when the VLM is disabled, the provider is unsupported, the
     API key is missing, or the SDK isn't installed — so callers degrade gracefully and the gate is
-    never coupled to the VLM. Only `provider="gemini"` is implemented.
+    never coupled to the VLM. Providers: `gemini`, `groq`.
     """
     if not settings.vlm_enabled:
         return None
-    if settings.vlm_provider != "gemini":
+    entry = _PROVIDERS.get(settings.vlm_provider)
+    if entry is None:
         log.warning("vlm_unsupported_provider", provider=settings.vlm_provider)
         return None
-    if not settings.gemini_api_key:
-        log.warning("vlm_disabled_no_key", hint="set GEMINI_API_KEY to enable the VLM")
+    client_cls, key_attr, pip_hint = entry
+    api_key = getattr(settings, key_attr, "")
+    if not api_key:
+        log.warning(
+            "vlm_disabled_no_key", provider=settings.vlm_provider, hint=f"set {key_attr.upper()}"
+        )
         return None
     try:
-        client = GeminiVLMClient(
-            settings.gemini_api_key,
+        client = client_cls(
+            api_key,
             settings.vlm_model,
             timeout_s=settings.vlm_timeout_s,
             max_retries=settings.vlm_max_retries,
         )
     except ImportError:
-        log.warning("vlm_sdk_missing", hint="pip install google-genai to enable the VLM")
+        log.warning("vlm_sdk_missing", provider=settings.vlm_provider, hint=pip_hint)
         return None
     except Exception as err:  # noqa: BLE001 — bad key/config: fall back rather than crash the pass
         log.warning("vlm_init_failed", error=str(err))

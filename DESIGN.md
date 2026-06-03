@@ -138,11 +138,19 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   Detections whose **foot-point falls outside a calibrated floor polygon** are dropped (ADR-0010) — it
   removed **317** off-floor detections and generalises to product displays and poster faces. Only CAM5 is
   calibrated for now; other cameras fail open.
-- **A8 — The entrance camera contributes footfall, not visitor counts.** CAM3 looks onto the **mall
-  corridor**, so its zone detections are dominated by pass-by pedestrians (the ADR-0006 hazard) and its
-  bright shelves dilute the staff-darkness score. We therefore count unique visitors from the
-  **shopping-floor cameras (CAM1/CAM2/CAM5)** and keep CAM3 for `ENTRY`/`EXIT`/`REENTRY` flow only
-  (ADR-0011). This removed the last 3 spurious "customers" (mall pass-by), giving exactly 2.
+- **A8 — Unique visitors are counted across *all* cameras, but only for solid, store-interior tracks
+  (ADR-0029, refining ADR-0011).** A person counts if their track is *solid*: sustained presence
+  (`min_zone_dwell`), on the walkable floor (mask where calibrated), a **large-enough box** (drops tiny
+  far/reflection blobs), and — on any camera with an entrance line — on the **store-interior** side
+  (mall-corridor pass-by is discarded by the calibrated line). Re-ID de-dups a shopper seen on several
+  cameras into one visitor. So the **entrance camera now contributes interior visitors too**, not just
+  line crossings, without re-admitting the corridor traffic that ADR-0011 originally excluded the whole
+  camera to avoid. *We deliberately did **not** gate on face visibility:* on this steep overhead CCTV,
+  shoppers face the shelves (backs/tops of heads) and some faces are **privacy-blurred**, so a
+  "face-visible-or-discard" rule would drop most genuine visitors and distort conversion — track-quality
+  + the entrance line achieve the same intent (count only real, interior shoppers) on this footage.
+  *Caveat:* this changes the counting path, so the earlier "exactly 2 customers" figure must be
+  **re-validated on the next full detector run**; the box-size threshold is config (`MIN_DETECTION_BOX_FRAC`).
 - **A-note — The clip has only 2 genuine customers, so customer-side metrics are illustrative, not
   statistically robust.** Conversion = converted ÷ 2 is fragile to a single misclassification; the system
   still computes it honestly and it varies with input — the value is the *correct pipeline*, not a large-N
@@ -194,6 +202,19 @@ reviewer knows exactly what is measured and why. Each is data-driven and revisit
   *Why:* one signal that works across stores, scoring Part D (AI engineering) honestly; output varies
   with the real image (integrity-safe) and the prompts are documented. (See [[DECISIONS]] ADR-0027,
   `CHOICES.md` Decision 7.)
+
+- **A14 — Store_2 (ST1009) runs through the same pipeline, but its numbers are approximate and
+  conversion is N/A.** The corrected dataset added a second store (two entrances, a `zone` and a
+  `billing` camera, 960×1080). We made stores a **pluggable, auto-discovered registry** so Store_2 (and
+  any future store) is a drop-in (`stores/<id>.py` + a clips folder; ADR-0028), and the detector now
+  loops every store with its own Re-ID/staff/zone identity. Three honest limits, all data-forced: (i)
+  **no POS for Store_2 → conversion is reported as N/A**, not a misleading 0 (footfall, dwell, zones,
+  queue still compute); (ii) **no ground truth**, so the two **entrance lines are placeholders**
+  (`calibrated=False`) and footfall is rough — unique visitors come from the `zone`+`billing` cameras,
+  as for Store_1 (A8); (iii) Store_2's clips were recorded on **different real days**, so per the user's
+  direction we **pin them to one synthetic day** to make daily metrics legible. Cross-store identity is
+  intentionally isolated (a visitor in one store isn't the same as in another). The VLM (A13) supplies
+  Store_2's staff (pink uniforms) and zone labels.
 
 ## 8. Known limitations & next steps
 - Per-camera calibrations (entry line, CAM5 floor mask) are validated against the real video; robust to a

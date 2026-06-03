@@ -70,8 +70,31 @@ set: **two entry cameras** plus a floor and a billing view.
 - **People in Store_1 (carried from the prior verified ground truth — same clips):** across the cameras
   there are **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. Staff dark-uniform is
   the staff signal ([[DECISIONS]] ADR-0009); CAM 5 has a **mirror / backlit display** that double-detects
-  (handled by a walkable-floor mask, ADR-0010); the entrance view is dominated by **mall-corridor pass-by**
-  so it counts footfall only, not visitors (ADR-0011). **Store_2's people count is not yet derived.**
+  (handled by a walkable-floor mask, ADR-0010); the entrance view is dominated by **mall-corridor pass-by**,
+  filtered now by the entrance line + quality gate (ADR-0029).
+- **People in Store_2 (user-provided ground truth, watching the footage — authoritative):**
+  **22 unique customers + 3 staff** across the store (Re-ID-deduped headline). Per-camera observations
+  (flows, not unique counts):
+    - **billing_area:** 5 people — **2 staff + 3 customers** (2 customers linger at the counter; 1 person
+      just passes through).
+    - **entry 1:** 1 person inside; flows of customers entering/exiting (≈2 enter, 2 exit, 1 enter,
+      2 exit); 1 staff.
+    - **entry 2:** ~6 people enter; 1 staff already present; 1 customer exit; 2 customers enter; 1 staff arrives.
+    - **zone:** 1 staff; 2 customers come, then 3 customers; 1 staff; 1 person enters the staff room.
+  Headline to validate the pipeline against: **22 customers, 3 staff (25 people total)** — a *busy* store
+  vs Store_1's 2 customers, which stresses Re-ID de-duplication. Store_2 has **no POS** (no conversion).
+  - **Pipeline result (ADR-0030/0031):** with calibrated entrance lines + per-store tuning
+    (`reid_max_distance=0.30`, `dwell=800ms`) the detector reaches **23 unique people** (≈25; per-camera
+    BILLING=6/ENTRY1=5/ENTRY2=8/ZONE=7, consistent with the flows). The ~8% undercount is weak
+    colour-histogram Re-ID on a dense crowd. **Staff via VLM (Llama-4 Scout on Groq): 4 staff / 19
+    customers** (vs 3/22) — 23 VLM calls, 0 failures (Groq's free tier cleared what Gemini's 20/day
+    couldn't). The VLM also relabelled the zone cam `makeup_aisle → skincare_aisle`. Proof images:
+    `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`.
+  - **Honest caveat on the split:** the **total count (~23) is reliable**, but **staff-vs-customer is
+    the weak link** — Llama-4 Scout returns mostly **low-confidence** verdicts on this steep overhead
+    CCTV (uniforms/lanyards/pink not visible from above), so the staff count is **crop-sensitive**
+    (4 staff on first-emit crops, 1 on largest-crop). The limitation is the camera angle, not the
+    model/quota. A body/face Re-ID embedding or a counter-region prior would firm this up.
 - **Anonymisation (PDF §3.2):** full-face blur on every frame, store branding masked, no audio. Faces are
   unusable → Re-ID must be appearance/trajectory-based (which ours is), and any gender/age signal in
   `sample_events.jsonl` (§5) cannot come from clear faces.

@@ -1,7 +1,9 @@
 """detector service.
 
-Slice 2.4 — Re-ID + edge cases. Runs YOLO + ByteTrack on every customer camera (CAM1/2/3/5; CAM4 is
-the staff back room and is skipped). For each tracked person it:
+Runs YOLO + ByteTrack over **every configured store** (the pluggable `shelfsense_common.stores`
+registry, ADR-0028) — each store's clips live under its own `clips_dir` beneath the CCTV mount, and
+each store gets its own Re-ID identity space, staff decisions, zone labels and clip start. For each
+tracked person on a customer camera it:
   - builds a lightweight appearance signature and resolves a GLOBAL `visitor_id` via the gallery
     (the same shopper across cameras / returning collapses to ONE id — ADR-0007/0008),
   - emits ZONE_ENTER / ZONE_DWELL / ZONE_EXIT for the camera's primary zone (ZoneTracker),
@@ -16,26 +18,28 @@ Clips are finite recordings, so the service processes them once and then idles h
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 from shelfsense_common.config import Settings, get_settings
 from shelfsense_common.contracts import (
-    STORE,
     BehaviorEvent,
     BehaviorEventType,
     CameraConfig,
     CameraRole,
     EventMetadata,
+    StoreConfig,
 )
 from shelfsense_common.logging import configure_logging, get_logger
 from shelfsense_common.sinks import EventSink, FanOutSink, HttpEventSink, JsonlEventSink
+from shelfsense_common.stores import all_stores
 from shelfsense_common.worker import GracefulRunner
 
 from app.billing import BillingTracker
 from app.crossing import CrossingDetector
 from app.frames import VideoFrameSource
+from app.gating import passes_size_gate
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
 from app.staff import StaffClassifier, uniform_darkness
 from app.staff_decider import StaffDecider
@@ -49,8 +53,10 @@ SERVICE = "detector"
 
 
 def process_camera(
+    store: StoreConfig,
     camera: CameraConfig,
     clip_path: Path,
+    clip_start: datetime,
     tracker: PersonTracker,
     registry: VisitorRegistry,
     staff: StaffDecider,
@@ -61,23 +67,24 @@ def process_camera(
     zone_override: str | None = None,
 ) -> dict[str, int]:
     """Track one camera; emit zone + entrance + reentry events with global (Re-ID'd) visitor ids."""
-    clip_start = settings.clip_start_dt
     # The zone this camera's events carry: the VLM's label when it confidently read the shelves
     # (zone_override), else the static hand-mapped primary_zone (ADR-0027). One value for the clip.
     zone_value = zone_override or camera.primary_zone.value
-    # The ENTRANCE camera contributes FOOTFALL (ENTRY/EXIT crossings) only — not zone-visitor
-    # counts: it looks onto the mall corridor, so its zone detections are dominated by pass-by
-    # pedestrians, not shoppers (ADR-0011, refining ADR-0007). Visitors come from the floor cams.
-    zone_enabled = camera.role is not CameraRole.ENTRANCE
-    zone_tracker = (
-        ZoneTracker(
-            zone=zone_value,
-            min_zone_dwell_ms=settings.min_zone_dwell_ms,
-            dwell_interval_ms=settings.zone_dwell_interval_ms,
-            exit_grace_ms=settings.zone_exit_grace_ms,
-        )
-        if zone_enabled
-        else None
+    # Count unique visitors from EVERY camera (ADR-0029, refining ADR-0011): each camera runs a zone
+    # tracker, and Re-ID de-dups a person seen on several cameras into one visitor. Mall pass-by on
+    # the entrance camera is discarded by the calibrated entrance line — only store-INTERIOR
+    # detections feed the zone tracker (the inside-line filter in the frame loop) — and tiny
+    # far/reflection blobs are dropped by the box-size gate. The entrance thus contributes interior
+    # visitors too, not just crossings, without re-admitting the corridor traffic (ADR-0011).
+    min_zone_dwell_ms = (
+        store.min_zone_dwell_ms if store.min_zone_dwell_ms is not None
+        else settings.min_zone_dwell_ms
+    )
+    zone_tracker = ZoneTracker(
+        zone=zone_value,
+        min_zone_dwell_ms=min_zone_dwell_ms,
+        dwell_interval_ms=settings.zone_dwell_interval_ms,
+        exit_grace_ms=settings.zone_exit_grace_ms,
     )
     crossing = (
         CrossingDetector(camera.entrance_line, confirm_frames=settings.crossing_confirm_frames)
@@ -93,6 +100,7 @@ def process_camera(
         "zone": 0,
         "reentry": 0,
         "off_floor": 0,
+        "too_small": 0,
         "billing": 0,
     }
     # Running appearance signature per track (sum of per-frame histograms) until resolved.
@@ -127,7 +135,7 @@ def process_camera(
         queue_depth: int | None = None,
     ) -> None:
         event = BehaviorEvent(
-            store_id=STORE.store_id,
+            store_id=store.store_id,
             camera_id=camera.camera_id,
             visitor_id=visitor_id,
             event_type=event_type,
@@ -141,7 +149,7 @@ def process_camera(
             ),
         )
         sink.write(event)
-        emitted_visitors.add(visitor_id)
+        emitted_visitors.add(f"{store.store_id}:{visitor_id}")  # store-scoped so ids can't collide
         key = {
             BehaviorEventType.ENTRY: "entries",
             BehaviorEventType.EXIT: "exits",
@@ -207,23 +215,35 @@ def process_camera(
             zone=zone_value,
             fps=src.source_fps,
         )
+        frame_h, frame_w = (src.height, src.width)
         for frame in src.frames():
             last_ts = frame.ts_ms
             for track in tracker.update(frame.image):
-                if camera.floor_region is not None:
-                    fx, fy = track.foot_point
-                    if not camera.floor_region.contains(fx, fy):
-                        counts["off_floor"] += 1  # reflection / wall display — not on the floor
-                        continue
+                fx, fy = track.foot_point
+                # Quality gate (ADR-0029): drop tiny far/reflection blobs entirely (mall pedestrians
+                # seen small through the storefront glass). Applies before counting AND crossing.
+                if not passes_size_gate(
+                    track.bbox.w, track.bbox.h, frame_w, frame_h, settings.min_detection_box_frac
+                ):
+                    counts["too_small"] += 1
+                    continue
+                # Walkable-floor mask (where calibrated): reflections / wall displays aren't on the
+                # floor. Drops entirely (not a real shopper).
+                if camera.floor_region is not None and not camera.floor_region.contains(fx, fy):
+                    counts["off_floor"] += 1
+                    continue
                 accumulate_signature(track.track_id, frame.image, track.bbox)
                 # Capture a representative crop for the VLM staff call (no-op without a VLM). Done
                 # outside accumulate_signature so a quickly-resolved track still gets a crop.
                 staff.observe_crop(camera.camera_id, track.track_id, frame.image, track.bbox)
-                if zone_tracker is not None:
+                # Pass-by filter (ADR-0029): on a camera with an entrance line, only store-INTERIOR
+                # detections count as visitors — mall corridor traffic stays out of the zone count.
+                # The crossing detector below still sees both sides, so it can detect entries.
+                inside_ok = camera.entrance_line is None or camera.entrance_line.is_inside(fx, fy)
+                if inside_ok:
                     for ze in zone_tracker.observe(track.track_id, frame.ts_ms, track.confidence):
                         emit_zone(ze)
                 if crossing is not None:
-                    fx, fy = track.foot_point
                     for cross in crossing.update(
                         track.track_id, fx, fy, frame.ts_ms, track.confidence
                     ):
@@ -235,29 +255,143 @@ def process_camera(
                             zone_id=None,
                             dwell_ms=0,
                         )
-            if zone_tracker is not None:
-                for ze in zone_tracker.sweep(frame.ts_ms):  # close tracks that left the zone
-                    emit_zone(ze)
+            for ze in zone_tracker.sweep(frame.ts_ms):  # close tracks that left the zone
+                emit_zone(ze)
             counts["frames"] += 1
             if settings.detector_max_frames and counts["frames"] >= settings.detector_max_frames:
                 break
-    if zone_tracker is not None:
-        for ze in zone_tracker.flush(last_ts):  # close anyone still present at clip end
-            emit_zone(ze)
+    for ze in zone_tracker.flush(last_ts):  # close anyone still present at clip end
+        emit_zone(ze)
 
-    log.info("camera_processed", camera=camera.camera_id, **counts)
+    log.info("camera_processed", store=store.store_id, camera=camera.camera_id, **counts)
     return counts
 
 
-def run_once(settings: Settings, log) -> dict[str, int]:
-    """Process every customer camera once and write events. Returns aggregate counts."""
-    cctv_dir = Path(settings.cctv_dir)
-    cameras = [c for c in STORE.cameras if c.is_customer_area]
-    allow = {
+def _clip_start_for(store: StoreConfig, settings: Settings) -> datetime:
+    """Store-local clip start: the store's own `clip_start_iso`, else the global default."""
+    return datetime.fromisoformat(store.clip_start_iso or settings.clip_start_iso)
+
+
+def _enabled_filter(settings: Settings) -> set[str]:
+    """Optional camera allow-list from `ENABLED_CAMERAS` (normalised), applied across all stores."""
+    return {
         c.strip().upper().replace(" ", "") for c in settings.enabled_cameras.split(",") if c.strip()
     }
-    if allow:  # optional filter (e.g. only the cameras a reviewer can ground-truth)
+
+
+def process_store(
+    store: StoreConfig,
+    cctv_dir: Path,
+    tracker: PersonTracker,
+    sink: EventSink,
+    vlm,
+    vlm_cache,
+    settings: Settings,
+    log,
+    emitted_visitors: set[str],
+    http_sink: HttpEventSink | None,
+) -> dict[str, int]:
+    """Process one store end to end: its own Re-ID gallery, staff decider, zone labels, clip start.
+
+    Each store is isolated — a visitor in one store is never the same identity as in another — so
+    the gallery/registry/staff state is rebuilt per store. The shared YOLO tracker is reset per cam.
+    """
+    store_dir = cctv_dir / store.clips_dir
+    cameras = store.customer_cameras
+    allow = _enabled_filter(settings)
+    if allow:
         cameras = [c for c in cameras if c.camera_id in allow]
+    if not cameras:
+        return {}
+
+    # Per-store density tuning falls back to the global default when the store doesn't override it.
+    reid_max_distance = (
+        store.reid_max_distance if store.reid_max_distance is not None
+        else settings.reid_max_distance
+    )
+    registry = VisitorRegistry(
+        ReIDGallery(
+            max_distance=reid_max_distance,
+            reentry_min_gap_ms=settings.reid_reentry_min_gap_ms,
+        )
+    )
+    heuristic_staff = StaffClassifier(
+        threshold=settings.staff_darkness_threshold,
+        presence_fallback_ms=(
+            settings.staff_min_presence_ms if settings.staff_presence_fallback else None
+        ),
+    )
+    staff = StaffDecider(
+        heuristic_staff,
+        vlm,
+        vlm_cache,
+        store.store_id,
+        min_confidence=settings.vlm_staff_min_confidence,
+        classify_staff=settings.vlm_classify_staff,
+        log=log,
+    )
+    # Label product-camera zones from the shelves (VLM), falling back to the static primary_zone.
+    zone_overrides = resolve_zones(
+        cameras, store_dir, vlm, vlm_cache, settings, store.store_id, log
+    )
+    clip_start = _clip_start_for(store, settings)
+    log.info(
+        "store_open",
+        store=store.store_id,
+        clips_dir=store.clips_dir,
+        cameras=[c.camera_id for c in cameras],
+        clip_start=clip_start.isoformat(),
+    )
+
+    totals: dict[str, int] = {}
+    for camera in cameras:
+        clip_path = store_dir / camera.file
+        if not clip_path.exists():
+            log.warning(
+                "clip_missing", store=store.store_id, camera=camera.camera_id, path=str(clip_path)
+            )
+            continue
+        counts = process_camera(
+            store,
+            camera,
+            clip_path,
+            clip_start,
+            tracker,
+            registry,
+            staff,
+            sink,
+            settings,
+            log,
+            emitted_visitors,
+            zone_override=zone_overrides.get(camera.camera_id),
+        )
+        for key, value in counts.items():
+            totals[key] = totals.get(key, 0) + value
+        # Incremental flush (ADR-0018): push THIS camera's events to the API as soon as it's done,
+        # so the endpoints populate progressively across the run instead of only at the final exit.
+        sink.flush()
+        if http_sink is not None:
+            log.info(
+                "camera_posted",
+                store=store.store_id,
+                camera=camera.camera_id,
+                posted_to_api=http_sink.posted,
+            )
+    return totals
+
+
+def run_once(settings: Settings, log) -> dict[str, int]:
+    """Process every configured store's cameras once and write events. Returns aggregate counts.
+
+    Stores come from the pluggable registry (`all_stores()`), so onboarding a store needs no change
+    here. Shared across stores: the YOLO tracker, the event sinks, and the (optional) VLM + its
+    cache. Isolated per store: Re-ID / identity / staff decisions / zone labels / clip start.
+    """
+    cctv_dir = Path(settings.cctv_dir)
+    stores = all_stores()
+    allow_stores = {s.strip().upper() for s in settings.enabled_stores.split(",") if s.strip()}
+    if allow_stores:  # optional filter (e.g. process only one store)
+        stores = [s for s in stores if s.store_id.upper() in allow_stores]
     log.info(
         "detector_boot",
         model=settings.yolo_model,
@@ -266,7 +400,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         sample_fps=settings.tracker_sample_fps,
         imgsz=settings.detector_imgsz,
         reid_max_distance=settings.reid_max_distance,
-        cameras=[c.camera_id for c in cameras],
+        stores=[s.store_id for s in stores],
         events_path=settings.events_jsonl_path,
     )
 
@@ -277,42 +411,14 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         tracker_cfg=settings.tracker_cfg,
         imgsz=settings.detector_imgsz,
     )
-    gallery = ReIDGallery(
-        max_distance=settings.reid_max_distance,
-        reentry_min_gap_ms=settings.reid_reentry_min_gap_ms,
-    )
-    registry = VisitorRegistry(gallery)
-    heuristic_staff = StaffClassifier(
-        threshold=settings.staff_darkness_threshold,
-        presence_fallback_ms=(
-            settings.staff_min_presence_ms if settings.staff_presence_fallback else None
-        ),
-    )
-    # Optional VLM (ADR-0027). build_vlm_client returns None when disabled / no key / SDK absent,
-    # so the decider quietly uses the heuristic and `docker compose up` stays key/network-free.
+    # Optional VLM (ADR-0027). build_vlm_client returns None when disabled / no key / SDK absent, so
+    # the deciders quietly use the heuristic and `docker compose up` stays key/network-free. Built
+    # once and shared across stores; the cache de-dups calls (keyed by store+visitor/store+camera).
     vlm = build_vlm_client(settings, log)
     vlm_cache = JsonFileCache(settings.vlm_cache_path) if vlm is not None else None
-    staff = StaffDecider(
-        heuristic_staff,
-        vlm,
-        vlm_cache,
-        STORE.store_id,
-        min_confidence=settings.vlm_staff_min_confidence,
-        classify_staff=settings.vlm_classify_staff,
-        log=log,
-    )
-    # Label product-camera zones from the shelves (VLM), falling back to the static primary_zone.
-    zone_overrides = resolve_zones(cameras, cctv_dir, vlm, vlm_cache, settings, STORE.store_id, log)
-    totals = {
-        "frames": 0,
-        "entries": 0,
-        "exits": 0,
-        "zone": 0,
-        "reentry": 0,
-        "off_floor": 0,
-        "billing": 0,
-    }
-    emitted_visitors: set[str] = set()  # distinct GLOBAL visitors who produced an event
+
+    totals: dict[str, int] = {}
+    emitted_visitors: set[str] = set()  # distinct (store, visitor) ids that produced an event
 
     # Fan each event to the JSONL (inspectable + replayable) and, when enabled, straight to the API
     # via POST so `docker compose up` populates the endpoints with no manual replay (ADR-0015).
@@ -330,37 +436,28 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         sinks.append(http_sink)
 
     with FanOutSink(sinks) as sink:
-        for camera in cameras:
-            clip_path = cctv_dir / camera.file
-            if not clip_path.exists():
-                log.warning("clip_missing", camera=camera.camera_id, path=str(clip_path))
-                continue
-            counts = process_camera(
-                camera,
-                clip_path,
+        for store in stores:
+            store_totals = process_store(
+                store,
+                cctv_dir,
                 tracker,
-                registry,
-                staff,
                 sink,
+                vlm,
+                vlm_cache,
                 settings,
                 log,
                 emitted_visitors,
-                zone_override=zone_overrides.get(camera.camera_id),
+                http_sink,
             )
-            for key, value in counts.items():
-                totals[key] += value
-            # Incremental flush (ADR-0018): push THIS camera's events to the API as soon as it's
-            # done, so the endpoints populate progressively across the run instead of only at the
-            # final exit. Idempotent ingest makes the extra POSTs safe; the JSONL still gets all.
-            sink.flush()
-            if http_sink is not None:
-                log.info("camera_posted", camera=camera.camera_id, posted_to_api=http_sink.posted)
+            for key, value in store_totals.items():
+                totals[key] = totals.get(key, 0) + value
 
     # Logged after the sinks close so the HTTP sink's final batch is already flushed/counted.
-    # unique_visitors = distinct GLOBAL ids that produced an event (Re-ID-deduped).
+    # unique_visitors = distinct (store, visitor) ids that produced an event (Re-ID-deduped).
     posted = http_sink.posted if http_sink is not None else 0
     log.info(
         "detection_pass_complete",
+        stores=len(stores),
         unique_visitors=len(emitted_visitors),
         posted_to_api=posted,
         **totals,

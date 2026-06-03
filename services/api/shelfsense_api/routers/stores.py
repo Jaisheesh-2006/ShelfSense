@@ -177,6 +177,7 @@ def store_anomalies(store_id: str) -> AnomaliesResponse:
     anomalies = detect_anomalies(
         events,
         txns,
+        store_id=store_id,
         store_tz=settings.store_timezone,
         window_ms=settings.pos_correlation_window_ms,
         low_sample_threshold=settings.conversion_low_sample_threshold,

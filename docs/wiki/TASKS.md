@@ -136,21 +136,36 @@
 - ✅ **Brand → department rollup (ADR-0025, user request):** curated `brand → department` taxonomy
   (`departments.py`, grounded in the store's old `dep_name` + layout) so the API reports **both `top_brand`
   and `top_department`** (real CSV → top brand Faces Canada, top dept makeup). ruff + **115 tests** + `tsc` green.
-- 🟡 **D2 — Store_2 (in progress):**
+- ✅ **D2 — Store_2 (done — ADR-0028):**
   - ✅ **Dashboard store switcher + `GET /stores` registry (ADR-0026):** top-bar switcher; **only the
     visible store polls** (`usePolling` resetKey); Store_2 assigned **`ST1009`**; config-driven (`STORES`).
-  - ✅ **VLM staff/zone signal ready (D5 below)** — the cross-store staff classifier (pink-staff fix) and
-    auto zone labelling that the detection half needs are now built and tested.
-  - ⬜ **Detection half (pending):** an `ST1009` `StoreConfig` + **multi-store detector loop**; process its
-    4 cams (two entrances; 960×1080) + tag events `ST1009`; calibrate entrance line(s) + zones from
-    `store 2 - layout.png`; **normalise all clips to one synthetic day**; **repoint the detector's compose
-    CCTV mount** to `Store_CCTV_Clips/` (old `CCTV Footage/` path is gone). Store_2 has **no POS** → no conversion.
+  - ✅ **VLM staff/zone signal (D5 below)** — cross-store staff classifier (pink-staff fix) + auto zone
+    labelling that the detection half consumes.
+  - ✅ **Pluggable multi-store registry + detection half (ADR-0028):** stores are now **auto-discovered**
+    (`shelfsense_common.stores`, one file per store); the detector loops `all_stores()` with per-store
+    Re-ID/staff/zone/clip-start. **ST1009** added (two entrances + `zone` + `billing`, 960×1080; clips
+    pinned to one synthetic day; placeholder entrance lines — no ground truth; **no POS → conversion
+    N/A**). Corrected-dataset Store_1 filenames fixed; **CCTV mount repointed** to `Store_CCTV_Clips/`.
+    Adding a future store = drop `stores/<id>.py` + a clips folder. ruff + **144 tests** green.
+  - ✅ **Store_2 pipeline run vs ground truth (ADR-0030):** calibrated entrance lines + per-store
+    density tuning (reid 0.30 / dwell 800, baked in ST1009). **23 unique vs 25 ground truth**;
+    `scripts/run_detection.py --store ST1009`; events at `data/events/store2.jsonl`.
+  - ✅ **VLM staff-ID for Store_2 via Groq (ADR-0031):** added a pluggable Groq provider
+    (`llama-4-scout`) since Gemini free tier (20/day) < 23 visitors. Full run 23+1 calls, 0 failures →
+    **4 staff / 19 customers**; zone relabelled `makeup_aisle→skincare_aisle`. Proof images in
+    `docs/wiki/frames/`.
 - ✅ **D5 — Optional VLM (Gemini) for staff + zone classification (ADR-0027):** offline-only, off by default
   (gate-safe, no key/network for compose), cached, heuristic fallback. `detector/app/vlm.py` +
   `staff_decider.py` + `zone_resolver.py`; staff per `visitor_id`, zone per product camera; schema unchanged.
   ruff + `ruff format` clean, **138 tests** (+22 `test_vlm.py`, fake client). **Live two-store run pending the
   user's `GEMINI_API_KEY`**, then commit `events.jsonl` + the VLM cache for replay.
 - ⬜ **D4 — Demographics/groups (deferred):** default **no** (full-face-blurred footage); revisit only if needed.
+- ✅ **D6 — Counting approach: all cameras, quality-gated (ADR-0029, refines ADR-0011):** unique
+  visitors now counted from **every camera** (Re-ID-deduped) for **solid tracks** only — sustained +
+  on-floor + large-enough box (`MIN_DETECTION_BOX_FRAC`, `app/gating.py`) + **store-interior side of the
+  entrance line** (mall pass-by discarded by the line). Entrance cam contributes interior visitors, not
+  just crossings. Face-visibility gate **rejected** (overhead/blurred faces → undercount). ruff +
+  **148 tests** (+4 `test_gating.py`). ⚠ **Re-validate the Store_1 customer count on the next full run.**
 - ⬜ **Re-run the acceptance-gate dry-run** after the Store_2 / detector clip-path changes land.
 
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

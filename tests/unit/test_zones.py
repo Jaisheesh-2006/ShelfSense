@@ -5,19 +5,24 @@
 #   - EntranceLine.side()/is_inside() classify a point as inside (wood retail floor) or outside
 #     (dark threshold/mall) from the sign of a cross-product vs inside_sign.
 # Constraints:
-#   - Read coordinates from the live STORE config (do not hardcode) so tests track re-calibration.
+#   - Read coordinates from the live ST1008 store config (do not hardcode) so tests track
+#     re-calibration. The config now comes from the pluggable registry (ADR-0028).
 # Output:
 #   - Tests: CAM3 is the calibrated entrance; interior point inside, exterior point outside;
 #     side() signed and consistent with inside_sign; a point exactly on the line returns 0.
 #   - FloorRegion: CAM5 has a calibrated floor; a floor foot-point is inside, a back-doorway/
 #     display foot-point is outside; a degenerate (<3 vertex) region fails open.
 # CHANGES MADE:
-#   - Switched from hardcoded coordinates to the live STORE config.
+#   - Switched from hardcoded coordinates to the live store config.
+#   - Now reads ST1008 from the store registry (`get_store`) instead of the removed `STORE` const.
 #   - Added the on-the-line (==0) boundary case.
 #   - Added FloorRegion (CAM5 mirror/display mask) tests (Slice 2.4b).
 """Unit tests for the calibrated entrance line + CAM5 floor-mask geometry."""
 
-from shelfsense_common.contracts import STORE, EntranceLine, FloorRegion
+from shelfsense_common.contracts import EntranceLine, FloorRegion
+from shelfsense_common.stores import get_store
+
+STORE = get_store("ST1008")
 
 
 def test_entrance_camera_is_calibrated():

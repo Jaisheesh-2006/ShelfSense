@@ -8,3 +8,5 @@ lap>=0.5.12               # ByteTrack association solver — baked in so trackin
 google-genai>=1.0,<2      # OPTIONAL VLM (Gemini) for offline staff/zone classification (ADR-0027).
                           # Lazy-imported + off by default, so a missing key/network never breaks
                           # `docker compose up`; only the offline pre-generation run uses it.
+groq>=1.0                 # OPTIONAL alternative VLM provider (multimodal Llama-4 etc.; ADR-0030).
+                          # Lazy-imported; used only when VLM_PROVIDER=groq for the offline run.

@@ -17,12 +17,15 @@ re-derived ([[GROUND_TRUTH]] §0). Decision status:
    taxonomy** (ADR-0025, `departments.py`) so the API now reports **both `top_brand` and
    `top_department`** (real CSV → top brand Faces Canada, top dept makeup; split makeup 14/skincare
    5/bath_and_body 2/…). Validated against the real CSV; ruff + **115 tests** + frontend `tsc` clean.
-2. 🟡 **Second store — PARTIALLY STARTED (ADR-0026):** the **dashboard store switcher + `GET /stores`
-   registry** are done — the top bar switches between stores and **only the visible store polls**; Store_2
-   is assigned **`ST1009`**. **Still pending (detection half):** an `ST1009` `StoreConfig` + multi-store
-   detector loop, calibrate its entrances + zones (960×1080), tag events `ST1009`, normalise all Store_2
-   clips to one synthetic day, and **repoint the detector CCTV mount** to `Store_CCTV_Clips/`. Until then
-   Store_2 shows empty in the switcher.
+2. ✅ **Second store — PLUMBING DONE (ADR-0026 + ADR-0028):** the **dashboard switcher + `GET /stores`**
+   were already done; now the **detection half** is too. Stores are a **pluggable auto-discovered
+   registry** (`shelfsense_common.stores`, one file per store) — the detector loops `all_stores()`,
+   each with its own Re-ID/staff/zone/clip-start, tagging events with the right `store_id`. **ST1009
+   (Store_2)** added: two entrances + `zone` + `billing` (960×1080), clips pinned to **one synthetic
+   day**, entrance lines placeholder-flagged (no ground truth), **no POS → conversion N/A**. The
+   corrected dataset's Store_1 filenames/paths were also fixed, and the **CCTV mount repointed** to
+   `Store_CCTV_Clips/`. Adding a future store = drop a `stores/<id>.py` + clips folder. **Remaining:**
+   the live two-store generation run (pending `GEMINI_API_KEY`) → commit `events.jsonl` + VLM cache.
 5. ✅ **VLM staff/zone classification — LOGIC DONE (ADR-0027):** optional **Gemini Flash** used **only in
    the offline detection pass** to classify **staff vs customer** (per visitor, replaces the dark-uniform
    heuristic that breaks on Store_2's pink staff) and **product-camera zones** (per camera). `VLM_ENABLED`
@@ -30,12 +33,32 @@ re-derived ([[GROUND_TRUTH]] §0). Decision status:
    Code/tests landed (`detector/app/vlm.py`, `staff_decider.py`, `zone_resolver.py`; **138 tests**). The
    actual two-store generation run is **pending the user's `GEMINI_API_KEY`**.
 4. ⏳ **Demographics/groups — PENDING (deferred):** default per D1 is **no** (full-face-blurred footage).
-Store_1 logic counts (unique 2, funnel 2→2→0→0) remain valid; a full clean-machine gate dry-run should
-be re-run once Store_2 / detector clip paths are settled. See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024.
+6. ✅ **Counting approach changed — ALL cameras, quality-gated (ADR-0029, refines ADR-0011):** unique
+   visitors are now counted from **every camera** (Re-ID-deduped), but only for **solid tracks** —
+   sustained + on-floor + large-enough box + **store-interior side of the entrance line** (mall pass-by
+   discarded by the line). The entrance cam now contributes interior visitors, not just crossings. A
+   literal "face-visible" gate was **rejected** (overhead CCTV + privacy-blurred faces ⇒ would
+   undercount). ⚠ **The Store_1 "2 customers" figure must be re-validated on the next full run** — this
+   changed the counting path and can't be re-checked without running YOLO.
+See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024/0029.
 
-**Single next action:** build the **ST1009 `StoreConfig` + multi-store detector loop** (the Store_2
-detection half), then — once the user adds `GEMINI_API_KEY` — run both stores with `VLM_ENABLED=true`
-and **commit `events.jsonl` + the VLM cache** for replay.
+7. ✅ **Store_2 pipeline RUN against ground truth (ADR-0030):** full chain executed — calibrated both
+   entrance lines, per-store density tuning (`reid_max_distance=0.30`, `min_zone_dwell_ms=800`, baked in
+   ST1009; Store_1 unchanged). Result: **23 unique people vs 25 ground truth** (per-camera BILLING=6,
+   ENTRY1=5, ENTRY2=8, ZONE=7 — consistent with the flows). Re-ID over-merge was the bottleneck (sweep:
+   0.55→6, 0.35→20, 0.30→23, 0.25→37). ⚠ **VLM staff-ID blocked:** model works (`gemini-2.5-flash-lite`)
+   but free tier = **20 req/day** < 23 visitors → all calls 429'd → staff split is heuristic (3/20), not
+   VLM. Events at `data/events/store2.jsonl`.
+
+8. ✅ **VLM staff/zone for Store_2 — DONE via Groq (ADR-0031):** added a pluggable **Groq** provider
+   (`meta-llama/llama-4-scout-17b-16e-instruct`) alongside Gemini, since Gemini's free tier (20/day) <
+   23 visitors. Full run: **23 staff calls + 1 zone call, 0 failures**. VLM result **4 staff / 19
+   customers** (vs 3/22); zone relabelled `makeup_aisle → skincare_aisle`. Proof images in
+   `docs/wiki/frames/` (`store2_entrance_lines.jpg`, `store2_customers_staff.jpg`).
+
+**Single next action:** **re-validate Store_1's count** under the new all-cameras counting (ADR-0029)
+on a full run (Store_1 can use the Groq VLM too now), then a clean-machine gate dry-run
+(`docker compose up`) covering the mount/multi-store/counting changes.
 
 ## Current phase
 

@@ -77,6 +77,7 @@ class PersonTracker:
         person_class_id: int = 0,
         tracker_cfg: str = "bytetrack.yaml",
         imgsz: int = 640,
+        iou: float | None = None,
     ) -> None:
         from ultralytics import YOLO  # lazy: heavy import (torch), not needed in unit tests
 
@@ -85,6 +86,7 @@ class PersonTracker:
         self.person_class_id = person_class_id
         self.tracker_cfg = self._resolve_tracker_cfg(tracker_cfg)
         self.imgsz = imgsz  # inference resolution (ADR-0019): lower = faster on CPU
+        self.iou = iou
 
     @staticmethod
     def _resolve_tracker_cfg(cfg: str) -> str:
@@ -95,15 +97,17 @@ class PersonTracker:
 
     def update(self, image: np.ndarray) -> list[Track]:
         """Feed the next frame of the current camera sequence; return its tracks."""
-        results = self._model.track(
-            image,
-            conf=self.confidence,
-            classes=[self.person_class_id],
-            tracker=self.tracker_cfg,
-            imgsz=self.imgsz,  # smaller = faster YOLO inference on CPU (ADR-0019)
-            persist=True,  # keep association state across frames of this sequence
-            verbose=False,
-        )
+        kwargs: dict[str, object] = {
+            "conf": self.confidence,
+            "classes": [self.person_class_id],
+            "tracker": self.tracker_cfg,
+            "imgsz": self.imgsz,  # smaller = faster YOLO inference on CPU (ADR-0019)
+            "persist": True,  # keep association state across frames of this sequence
+            "verbose": False,
+        }
+        if self.iou is not None:
+            kwargs["iou"] = self.iou
+        results = self._model.track(image, **kwargs)
         raw: list[RawTrack] = []
         for result in results:
             boxes = result.boxes

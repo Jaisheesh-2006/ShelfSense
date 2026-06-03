@@ -23,13 +23,16 @@
 - **Converted visitor (POS correlation rule):** a visitor whose session was in the **billing zone
   within the 5-minute window before a POS transaction timestamp** (same store) counts as converted.
   No `customer_id` — correlation is **time-window + store** only.
-- **unique visitors:** distinct **non-staff** `visitor_id`s — assigned to every tracked customer on first
-  detection in a **shopping-floor area (CAM1/CAM2/CAM5)**, not only to people who cross the entrance line
-  (ADR-0007). The **entrance camera (CAM3) contributes footfall only, not visitor counts** — its view is
-  dominated by mall-corridor pass-by ([[DECISIONS]] ADR-0011). Re-ID de-duplicates across cameras and keeps
-  re-entries the *same* visitor; staff (dark-uniform, ADR-0009) are excluded. This is the conversion
-  denominator. (Rationale: on ~2-min clips most shoppers are already inside, so entrance-crossings ≈ 0 —
-  ADR-0006/0007. Validated count on the clip: **2 customers** + 3 staff.)
+- **unique visitors:** distinct **non-staff** `visitor_id`s, counted from **every camera** (Re-ID
+  de-dups a shopper seen on several cameras / on return into one visitor), but only for a **solid track**
+  (ADR-0029): sustained presence (`min_zone_dwell`), on the walkable floor (`floor_region` where
+  calibrated), a **large-enough box** (`min_detection_box_frac` drops tiny far/reflection blobs), and —
+  on any camera with an `entrance_line` — only the **store-interior** side (mall-corridor pass-by is
+  discarded by the line). So the **entrance camera now contributes interior visitors too** (refining
+  ADR-0011, which had excluded it wholesale; the calibrated line keeps the corridor traffic out). Staff
+  (ADR-0009/0027) are excluded. This is the conversion denominator. (Earlier validated count on the
+  Store_1 clip was **2 customers** + 3 staff under the floor-cam-only rule; **re-validate on the next
+  full run** now that counting spans all cameras — ADR-0029.)
 - **POS source (corrected dataset, [[GROUND_TRUTH]] §2):** 7-col `POS - sample transactions.csv` → a
   **transaction = distinct `order_time`** (`order_id` is now per-line-item, not the basket key),
   `timestamp` from `order_date`+`order_time` (local, no tz), `basket_value` = Σ `total_amount` per
