@@ -22,6 +22,9 @@ STORE_CONFIG = StoreConfig(
     store_name="Brigade_Bangalore",
     clips_dir="Store_1/Store 1",
     clip_start_iso="2026-04-10T20:10:00+05:30",  # burnt-in CCTV overlay (~20:10 IST, 10-Apr-2026)
+    # ST1008 uses the global 0.55 / 2000ms defaults.
+    staff_heuristic_color="black",
+    detector_imgsz=480,
     cameras=[
         CameraConfig(
             camera_id="CAM1",

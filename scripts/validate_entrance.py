@@ -61,6 +61,8 @@ def main() -> None:
         settings.detection_confidence,
         settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
+        imgsz=settings.detector_imgsz,
+        iou=settings.detection_iou,
     )
     crossing = CrossingDetector(line, confirm_frames=settings.crossing_confirm_frames)
 

@@ -40,7 +40,7 @@ def main() -> None:
     cameras = [c for c in STORE.cameras if c.camera_id in wanted]
     tracker = PersonTracker(
         settings.yolo_model, settings.detection_confidence, settings.person_class_id,
-        tracker_cfg=settings.tracker_cfg,
+        tracker_cfg=settings.tracker_cfg, imgsz=settings.detector_imgsz, iou=settings.detection_iou,
     )
 
     # Capture one representative (summed, then normalised) signature per (camera, track) + timing.

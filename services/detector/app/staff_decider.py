@@ -19,6 +19,8 @@ Key behaviours:
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 
 from app.staff import StaffClassifier
@@ -35,6 +37,7 @@ class StaffDecider:
         cache: JsonFileCache | None,
         store_id: str,
         *,
+        staff_hint: str | None,
         min_confidence: float,
         classify_staff: bool,
         log,
@@ -43,6 +46,8 @@ class StaffDecider:
         self._vlm = vlm if classify_staff else None
         self._cache = cache
         self._store_id = store_id
+        self._staff_hint = staff_hint
+        self._staff_hint_key = _hint_key(staff_hint)
         self._min_confidence = min_confidence
         self._log = log
         # Largest-area crop seen per (camera, track) — the representative image we send to the VLM.
@@ -91,7 +96,7 @@ class StaffDecider:
         if visitor_id in self._verdicts:
             return self._verdicts[visitor_id]
 
-        cache_key = f"staff:{self._store_id}:{visitor_id}"
+        cache_key = f"staff:{self._store_id}:{self._staff_hint_key}:{visitor_id}"
         cached = self._cache.get(cache_key) if self._cache is not None else None
         if cached is not None:
             verdict = StaffVerdict(
@@ -107,7 +112,7 @@ class StaffDecider:
         if crop is None:
             return None  # nothing to send → heuristic
         try:
-            verdict = self._vlm.classify_staff(crop)
+            verdict = self._vlm.classify_staff(crop, staff_hint=self._staff_hint)
         except Exception as err:  # noqa: BLE001 — degrade to heuristic, don't crash the pass
             self._failed.add(visitor_id)
             self._log.warning("vlm_staff_failed", visitor=visitor_id, error=str(err))
@@ -134,3 +139,10 @@ class StaffDecider:
         """The representative crop to send the VLM: the largest crop seen for this track."""
         crop = self._crops.get((camera_id, track_id))
         return crop[0] if crop is not None else None
+
+
+def _hint_key(hint: str | None) -> str:
+    if not hint:
+        return "none"
+    digest = hashlib.md5(hint.strip().lower().encode("utf-8")).hexdigest()  # noqa: S324
+    return f"hint-{digest[:8]}"

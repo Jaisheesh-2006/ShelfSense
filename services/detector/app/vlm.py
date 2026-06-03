@@ -26,7 +26,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -56,7 +56,9 @@ class ZoneVerdict:
 class VLMClient(Protocol):
     """The narrow surface the detector depends on (real Gemini client or a test fake)."""
 
-    def classify_staff(self, image_bgr: np.ndarray) -> StaffVerdict: ...
+    def classify_staff(
+        self, image_bgr: np.ndarray, staff_hint: str | None = None
+    ) -> StaffVerdict: ...
 
     def classify_zone(
         self,
@@ -69,13 +71,37 @@ class VLMClient(Protocol):
 # --- Prompts (quoted in CHOICES.md / INTERVIEW_QA.md) ----------------------------------------
 
 STAFF_PROMPT = (
-    "You are analysing one cropped image of a single person inside a retail beauty store "
-    "(captured from CCTV; faces may be blurred). Decide whether this person is a STORE EMPLOYEE "
-    "(staff) or a CUSTOMER (shopper). Consider uniforms, lanyards/ID badges, aprons, and whether "
-    "they stand behind a counter. If you are unsure, prefer 'customer' and report low confidence. "
-    'Respond with ONLY a JSON object: {"label": "staff" | "customer", '
-    '"confidence": <number 0..1>, "reason": "<short reason>"}.'
+    "You are an expert visual analyst examining a "
+    "cropped CCTV image of a person in a retail "
+    "beauty store. "
+    "Your task is to classify whether this person "
+    "is a STORE EMPLOYEE (staff) or a CUSTOMER "
+    "(shopper).\n"
+    "EVIDENCE TO CONSIDER:\n"
+    "- Uniforms, lanyards, ID badges, aprons, or "
+    "earpieces strongly indicate STAFF.\n"
+    "- Casual clothing, coats, carrying personal "
+    "bags, or shopping baskets strongly indicate "
+    "CUSTOMER.\n"
+    "- Standing behind a counter or restocking "
+    "shelves indicates STAFF.\n"
+    "- If you are unsure or the image is too blurry "
+    "to distinguish a uniform, default to "
+    "'customer' with low confidence.\n"
+    "Respond with ONLY a JSON object exactly like "
+    "this: "
+    '{"label": "staff" | "customer", '
+    '"confidence": <float 0.0-1.0>, '
+    '"reason": "<concise reason>"}'
 )
+
+
+def build_staff_prompt(staff_hint: str | None) -> str:
+    """Add optional store-specific uniform context to the base staff prompt."""
+    hint = (staff_hint or "").strip()
+    if not hint:
+        return STAFF_PROMPT
+    return f"{STAFF_PROMPT}\n\nStore-specific context: {hint}"
 
 
 def build_zone_prompt(candidate_zones: list[str]) -> str:
@@ -208,8 +234,10 @@ class _BaseVLMClient:
     def _generate(self, image_bgr: np.ndarray, prompt: str, *extra_images: np.ndarray) -> str:
         raise NotImplementedError
 
-    def classify_staff(self, image_bgr: np.ndarray) -> StaffVerdict:
-        return parse_staff_reply(self._generate(image_bgr, STAFF_PROMPT))
+    def classify_staff(
+        self, image_bgr: np.ndarray, staff_hint: str | None = None
+    ) -> StaffVerdict:
+        return parse_staff_reply(self._generate(image_bgr, build_staff_prompt(staff_hint)))
 
     def classify_zone(
         self,
@@ -247,7 +275,7 @@ class GeminiVLMClient(_BaseVLMClient):
 
     def _generate(self, image_bgr: np.ndarray, prompt: str, *extra_images: np.ndarray) -> str:
         types = self._types
-        parts: list[object] = [
+        parts: Any = [
             types.Part.from_bytes(data=encode_jpeg(img), mime_type="image/jpeg")
             for img in (image_bgr, *extra_images)
         ]
@@ -302,11 +330,12 @@ class GroqVLMClient(_BaseVLMClient):
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
             )
         last_err: Exception | None = None
+        messages: Any = [{"role": "user", "content": content}]
         for attempt in range(self._max_retries + 1):
             try:
                 resp = self._client.chat.completions.create(
                     model=self._model,
-                    messages=[{"role": "user", "content": content}],
+                    messages=messages,
                     temperature=self._temperature,
                 )
                 return resp.choices[0].message.content or ""
@@ -318,7 +347,7 @@ class GroqVLMClient(_BaseVLMClient):
 
 
 # provider -> (client class, api-key settings attr, pip hint)
-_PROVIDERS: dict[str, tuple[type[_BaseVLMClient], str, str]] = {
+_PROVIDERS: dict[str, tuple[Any, str, str]] = {
     "gemini": (GeminiVLMClient, "gemini_api_key", "pip install google-genai"),
     "groq": (GroqVLMClient, "groq_api_key", "pip install groq"),
 }

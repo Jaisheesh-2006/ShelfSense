@@ -8,10 +8,11 @@ and **when we would revisit it**. Full decision log: `docs/wiki/DECISIONS.md`.
 ## Decision 1 — Detection model: YOLOv8-nano
 
 **Context.** The detection layer is the foundation; everything downstream inherits its quality. It must
-run on a plain CPU under `docker compose up`, and the challenge scores *handling of uncertainty and
-edge cases*, not a perfect detection rate.
+run on a plain CPU under `docker compose up`, and the challenge scores _handling of uncertainty and
+edge cases_, not a perfect detection rate.
 
 **Options considered.**
+
 - YOLOv8 (nano / small / medium) — mature, CPU-friendly, ships with tracking.
 - YOLOv9 / RT-DETR — higher accuracy, heavier, more setup.
 - MediaPipe — light but weaker for crowded retail scenes.
@@ -34,10 +35,11 @@ only pay if accuracy demanded it.
 
 ## Decision 2 — Event schema: adopt the prescribed flat behavioural schema
 
-**Context.** The detection layer must emit structured events that the API ingests and is *scored*
+**Context.** The detection layer must emit structured events that the API ingests and is _scored_
 against. Schema compliance is a graded criterion.
 
 **Options considered.**
+
 - (a) Our own envelope+payload design with low-level `detection.created` / `track.updated` events
   (rich for internal tracing).
 - (b) The flat behavioural schema prescribed by the problem statement (`ENTRY`, `ZONE_DWELL`,
@@ -64,6 +66,7 @@ we later needed frame-level forensics we'd add an internal debug stream without 
 `POST /events/ingest` plus a clean one-command start.
 
 **Options considered.**
+
 - (a) A Kafka-compatible broker (Redpanda) streaming events to a consumer that writes to the DB.
 - (b) The pipeline writes `events.jsonl` and **POSTs batches to `/events/ingest`**, which validates,
   de-duplicates (idempotent by `event_id`), and stores.
@@ -91,6 +94,7 @@ footage, the store has **5 staff / 2 customers**. With only **two** customers th
 is tiny, so a single staff/customer mistake is a ~50 % error. Getting this right matters more than headcount.
 
 **Options considered.**
+
 - (a) **Presence-time heuristic** — flag anyone present beyond a long threshold (our first, Slice 2.4 approach).
 - (b) **Dark-uniform appearance** — staff wear a complete black uniform; the customers wear grey/violet.
 - (c) **A learned uniform/colour classifier or VLM** — most accurate, heaviest.
@@ -125,13 +129,14 @@ bucket. Real pipelines re-send (retries, replays) and occasionally emit a bad re
 both **strict** (validate every event) and **forgiving** (one bad event mustn't sink a 500-event batch).
 
 **Options considered.**
+
 - (a) Type the request body as `list[BehaviorEvent]` and let Pydantic validate the batch.
 - (b) Accept the batch as **raw dicts** and validate each event individually, collecting per-event errors.
 - For dedup: (c) Postgres `ON CONFLICT` upsert vs (d) a portable "query-existing + insert-new + retry"
   that also works on SQLite.
 
 **What the AI suggested.** It flagged that (a) is cleaner but makes the whole batch 422 on a single bad
-event — breaking the spec's *partial success* — and recommended (b) with idempotent dedup keyed on
+event — breaking the spec's _partial success_ — and recommended (b) with idempotent dedup keyed on
 `event_id`. It also caught that our two services both had a top-level package named `app`, which collided
 on the test path and made the API **untestable**; it proposed renaming the API package to `shelfsense_api`.
 
@@ -158,6 +163,7 @@ volumes we'd switch to a batched `ON CONFLICT` upsert behind the same idempotent
 is two months old. A naive implementation would either fabricate baselines or always read "stale".
 
 **Options considered.**
+
 - (a) Fire the alerts anyway against invented baselines / wall-clock time — looks feature-complete.
 - (b) Omit the checks we can't fully evaluate — honest but loses graded features.
 - (c) Build every check correctly, but have the ones the data can't support **stand down with an INFO
@@ -185,10 +191,11 @@ lets us compute a rolling 7-day average (then it's a one-line swap, same rule).
 **Context.** Staff exclusion drives the conversion denominator, and our staff rule was "dark uniform"
 (Decision 4) — correct for Store_1's black uniforms but **wrong for Store_2, whose staff wear pink**.
 Zones were likewise a hand-mapped label per camera, which doesn't scale to a new store's shelves. The
-Problem Statement explicitly invites *"LLMs/VLMs for zone classification, staff detection, or anything
-useful"* (the Part D / AI-engineering bucket).
+Problem Statement explicitly invites _"LLMs/VLMs for zone classification, staff detection, or anything
+useful"_ (the Part D / AI-engineering bucket).
 
 **Options considered.**
+
 - (a) Per-store colour rules (add a pink rule for Store_2) — quick, but brittle and re-tuned per store.
 - (b) Train a staff/zone classifier — no labels exist; over-engineered for ~7 people.
 - (c) Use a **VLM (Gemini Flash)** as an occasional judgment helper — once per person for staff, once
@@ -202,15 +209,18 @@ useful"* (the Part D / AI-engineering bucket).
 **Decision.** **(c).** A lazy-imported Gemini client (`detector/app/vlm.py`) classifies **staff vs
 customer per `visitor_id`** and **zone per product camera** (entrance/checkout/stockroom stay
 role-known), feeding only the existing `is_staff` / `zone_id` fields (schema unchanged). It is **off by
-default** (`VLM_ENABLED=false`); when on, ~18 calls cover both stores, all cached. Missing key/SDK,
-low confidence, or any error **falls back to the heuristic**.
+default** (`VLM_ENABLED=false`); when on, ~18 calls cover both stores, all cached. The staff prompt
+can include a **store-specific uniform hint** (e.g., "pink shirts"), and the cache key includes that
+hint so updated guidance **invalidates stale verdicts**. Missing key/SDK, low confidence, or any
+error **falls back to the heuristic**.
 
 The prompts (documented, deterministic at temperature 0):
-- *Staff:* "…Decide whether this person is a STORE EMPLOYEE (staff) or a CUSTOMER… consider uniforms,
+
+- _Staff:_ "…Decide whether this person is a STORE EMPLOYEE (staff) or a CUSTOMER… consider uniforms,
   lanyards, aprons, standing behind a counter… reply JSON `{label, confidence, reason}`."
-- *Zone:* "…Identify the PRIMARY retail zone this camera covers from the shelves/products/signage…
+- _Zone:_ "…Identify the PRIMARY retail zone this camera covers from the shelves/products/signage…
   choose one of `[skincare_aisle, makeup_aisle, foh_center, accessories]`… reply JSON `{zone,
-  confidence, reason}`."
+confidence, reason}`."
 
 **Why.** One signal that generalises across stores (solves Store_2's pink staff) and auto-labels a new
 store's zones, while the gate stays a heuristic-only, network-free one-command run. We keep the
@@ -227,6 +237,7 @@ detector was hardwired to a single `STORE` constant. The brief: support Store_2 
 future store hassle-free ("drop in footage + details").
 
 **Options considered.**
+
 - (a) Keep one `STORE` and branch on `store_id` throughout — fastest, but scatters store logic and
   isn't pluggable.
 - (b) **JSON/YAML store config files** loaded from a directory — very config-driven, but risks the
@@ -236,7 +247,7 @@ future store hassle-free ("drop in footage + details").
   import; the detector loops `all_stores()`.
 
 **What the AI suggested.** It flagged that the gate is paramount (option b's packaging risk could fail
-the whole submission), and that a `.py` drop-in is *as easy* as JSON here while shipping automatically
+the whole submission), and that a `.py` drop-in is _as easy_ as JSON here while shipping automatically
 with the package and being Pydantic-validated. It recommended (c), with a `README` recipe and a single
 CCTV mount where each store declares its own `clips_dir`.
 

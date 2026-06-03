@@ -13,7 +13,7 @@
 tracker_type: bytetrack
 track_high_thresh: 0.25 # detections above this drive first-round association
 track_low_thresh: 0.10 # low-score detections used in ByteTrack's second association round
-new_track_thresh: 0.50 # higher than default (0.25): do not spawn a new id from weak detections
+new_track_thresh: 0.60 # higher than default (0.25): do not spawn a new id from weak detections
 track_buffer: 150 # frames to keep a lost track before deletion (~15 s @ 10 fps) — bridges occlusion
-match_thresh: 0.80 # IoU association threshold
+match_thresh: 0.70 # IoU association threshold
 fuse_score: true # fuse detection confidence into association cost

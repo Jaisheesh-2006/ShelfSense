@@ -41,7 +41,7 @@ from app.crossing import CrossingDetector
 from app.frames import VideoFrameSource
 from app.gating import passes_size_gate
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
-from app.staff import StaffClassifier, uniform_darkness
+from app.staff import StaffClassifier, measure_uniform_color
 from app.staff_decider import StaffDecider
 from app.track import PersonTracker
 from app.visits import VisitorRegistry
@@ -113,9 +113,13 @@ def process_camera(
         sig = appearance_signature(image, x, y, w, h)
         prev = sig_sums.get(track_id)
         sig_sums[track_id] = sig if prev is None else prev + sig
-        # Same crop, different measure: how black is this person's outfit? (staff uniform signal)
-        darkness = uniform_darkness(image, x, y, w, h, settings.staff_dark_v_max)
-        staff.observe(camera.camera_id, track_id, darkness)
+        # 2. Heuristic fallback (measure specific staff uniform colors)
+        color_score = measure_uniform_color(
+            image, x, y, w, h,
+            store.staff_heuristic_color,
+            settings.staff_dark_v_max,
+        )
+        staff.observe(camera.camera_id, track_id, color_score)
 
     def current_signature(track_id: int) -> np.ndarray:
         vec = sig_sums.get(track_id)
@@ -309,6 +313,11 @@ def process_store(
         store.reid_max_distance if store.reid_max_distance is not None
         else settings.reid_max_distance
     )
+    tracker.imgsz = (
+        store.detector_imgsz
+        if store.detector_imgsz is not None
+        else settings.detector_imgsz
+    )
     registry = VisitorRegistry(
         ReIDGallery(
             max_distance=reid_max_distance,
@@ -326,6 +335,7 @@ def process_store(
         vlm,
         vlm_cache,
         store.store_id,
+        staff_hint=store.staff_uniform_hint,
         min_confidence=settings.vlm_staff_min_confidence,
         classify_staff=settings.vlm_classify_staff,
         log=log,
@@ -392,17 +402,18 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     allow_stores = {s.strip().upper() for s in settings.enabled_stores.split(",") if s.strip()}
     if allow_stores:  # optional filter (e.g. process only one store)
         stores = [s for s in stores if s.store_id.upper() in allow_stores]
-    log.info(
-        "detector_boot",
-        model=settings.yolo_model,
-        confidence=settings.detection_confidence,
-        tracker=settings.tracker_cfg,
-        sample_fps=settings.tracker_sample_fps,
-        imgsz=settings.detector_imgsz,
-        reid_max_distance=settings.reid_max_distance,
-        stores=[s.store_id for s in stores],
-        events_path=settings.events_jsonl_path,
-    )
+        log.info(
+            "detector_boot",
+            model=settings.yolo_model,
+            confidence=settings.detection_confidence,
+            iou=settings.detection_iou,
+            tracker=settings.tracker_cfg,
+            sample_fps=settings.tracker_sample_fps,
+            imgsz=settings.detector_imgsz,
+            reid_max_distance=settings.reid_max_distance,
+            stores=[s.store_id for s in stores],
+            events_path=settings.events_jsonl_path,
+        )
 
     tracker = PersonTracker(
         settings.yolo_model,
@@ -410,7 +421,9 @@ def run_once(settings: Settings, log) -> dict[str, int]:
         settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
         imgsz=settings.detector_imgsz,
+        iou=settings.detection_iou,
     )
+
     # Optional VLM (ADR-0027). build_vlm_client returns None when disabled / no key / SDK absent, so
     # the deciders quietly use the heuristic and `docker compose up` stays key/network-free. Built
     # once and shared across stores; the cache de-dups calls (keyed by store+visitor/store+camera).
@@ -465,16 +478,132 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     return {**totals, "unique_visitors": len(emitted_visitors)}
 
 
+def replay_events(settings, log) -> dict[str, int]:
+    """Replay pre-generated events from the JSONL file to the API.
+
+    This is the default mode for `docker compose up`: no YOLO, no CCTV
+    clips, no VLM keys needed. The JSONL is read, each event is POSTed
+    to the API's ``/events/ingest`` endpoint (idempotent), and the
+    dashboard shows data immediately.
+    """
+    import json
+    import time
+    import urllib.request
+
+    events_path = Path(settings.events_jsonl_path)
+    if not events_path.is_file():
+        log.warning(
+            "replay_no_events_file",
+            path=str(events_path),
+            hint="Run the detection pipeline first "
+            "(DETECTOR_MODE=detect) to generate events.",
+        )
+        return {}
+
+    lines = [
+        ln
+        for ln in events_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    if not lines:
+        log.warning("replay_empty_events", path=str(events_path))
+        return {}
+
+    log.info(
+        "replay_start",
+        events=len(lines),
+        source=str(events_path),
+        target=settings.api_base_url,
+    )
+
+    # Wait for the API to be ready (same pattern as HttpEventSink).
+    api = settings.api_base_url.rstrip("/")
+    healthz = api + "/healthz"
+    deadline = time.monotonic() + settings.ingest_wait_s
+    while True:
+        try:
+            with urllib.request.urlopen(  # noqa: S310
+                healthz, timeout=2,
+            ) as resp:
+                if resp.status == 200:
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+        if time.monotonic() >= deadline:
+            log.warning(
+                "replay_api_not_ready",
+                wait_s=settings.ingest_wait_s,
+            )
+            break
+        time.sleep(1.0)
+
+    # POST events in batches (same batch_size as the live feed).
+    batch_size = settings.ingest_batch_size
+    ingest_url = api + "/events/ingest"
+    posted = 0
+    for start in range(0, len(lines), batch_size):
+        batch = lines[start : start + batch_size]
+        events_json = [json.loads(ln) for ln in batch]
+        body = json.dumps({"events": events_json}).encode("utf-8")
+        req = urllib.request.Request(
+            ingest_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        for attempt in range(settings.ingest_max_retries + 1):
+            try:
+                with urllib.request.urlopen(  # noqa: S310
+                    req, timeout=10,
+                ) as resp:
+                    result = json.loads(resp.read())
+                    accepted = result.get("accepted", 0)
+                    posted += accepted
+                    log.info(
+                        "replay_batch",
+                        batch=start // batch_size + 1,
+                        accepted=accepted,
+                        duplicates=result.get("duplicates", 0),
+                    )
+                break
+            except Exception as err:  # noqa: BLE001
+                if attempt >= settings.ingest_max_retries:
+                    log.warning(
+                        "replay_batch_failed",
+                        batch=start // batch_size + 1,
+                        error=str(err),
+                    )
+                else:
+                    time.sleep(0.5 * (attempt + 1))
+
+    log.info(
+        "replay_complete",
+        total_events=len(lines),
+        posted_to_api=posted,
+    )
+    return {"total_events": len(lines), "posted": posted}
+
+
 def main() -> None:
     settings = get_settings()
     configure_logging(SERVICE, settings.log_level)
     log = get_logger(SERVICE)
 
-    run_once(settings, log)
+    mode = settings.detector_mode.lower().strip()
+    if mode == "replay":
+        log.info("detector_mode", mode="replay")
+        replay_events(settings, log)
+    else:
+        log.info("detector_mode", mode="detect")
+        run_once(settings, log)
 
-    # Recorded clips are finite: idle (healthy) once processed instead of busy-reprocessing.
-    GracefulRunner(SERVICE, interval_s=30.0).run(lambda i: log.info("idle", iteration=i))
+    # Recorded clips are finite: idle (healthy) once processed
+    # instead of busy-reprocessing.
+    GracefulRunner(SERVICE, interval_s=30.0).run(
+        lambda i: log.info("idle", iteration=i),
+    )
 
 
 if __name__ == "__main__":
     main()
+

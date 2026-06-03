@@ -55,7 +55,7 @@ def main() -> None:
 
     tracker = PersonTracker(
         s.yolo_model, s.detection_confidence, s.person_class_id,
-        tracker_cfg=s.tracker_cfg, imgsz=s.detector_imgsz,
+        tracker_cfg=s.tracker_cfg, imgsz=s.detector_imgsz, iou=s.detection_iou,
     )
     registry = VisitorRegistry(
         ReIDGallery(max_distance=reid, reentry_min_gap_ms=s.reid_reentry_min_gap_ms)
@@ -116,7 +116,7 @@ def main() -> None:
         if vlm is None:
             continue
         try:
-            verdict = vlm.classify_staff(v["crop"])
+            verdict = vlm.classify_staff(v["crop"], staff_hint=store.staff_uniform_hint)
             v["staff"], v["conf"] = verdict.is_staff, verdict.confidence
         except Exception as err:  # noqa: BLE001 — leave as customer if the call fails
             print(f"{vid}: vlm failed: {str(err)[:80]}")

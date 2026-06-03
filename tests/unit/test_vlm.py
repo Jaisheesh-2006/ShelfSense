@@ -29,6 +29,7 @@ from app.vlm import (
     JsonFileCache,
     StaffVerdict,
     ZoneVerdict,
+    build_staff_prompt,
     build_vlm_client,
     build_zone_prompt,
     extract_json,
@@ -56,7 +57,7 @@ class FakeVLM:
         self.staff_calls = 0
         self.zone_calls = 0
 
-    def classify_staff(self, image_bgr):
+    def classify_staff(self, image_bgr, staff_hint=None):
         self.staff_calls += 1
         if self._raise:
             raise RuntimeError("boom")
@@ -113,6 +114,13 @@ def test_build_zone_prompt_lists_candidates():
     assert "JSON" in prompt
 
 
+def test_build_staff_prompt_includes_optional_hint():
+    base = build_staff_prompt(None)
+    hinted = build_staff_prompt("Staff wear pink shirts.")
+    assert "pink shirts" in hinted
+    assert base != hinted
+
+
 # --- persistent cache -----------------------------------------------------------------------
 
 
@@ -140,6 +148,7 @@ def _decider(heuristic, vlm, cache, min_confidence=0.55):
         vlm,
         cache,
         "ST1008",
+        staff_hint=None,
         min_confidence=min_confidence,
         classify_staff=True,
         log=_NullLog(),
@@ -194,7 +203,7 @@ def test_decider_visitor_none_forces_heuristic(tmp_path):
 
 def test_decider_uses_cached_verdict_without_recall(tmp_path):
     cache = JsonFileCache(tmp_path / "c.json")
-    cache.set("staff:ST1008:V1", {"is_staff": True, "confidence": 0.9, "reason": "seen"})
+    cache.set("staff:ST1008:none:V1", {"is_staff": True, "confidence": 0.9, "reason": "seen"})
     heuristic = StaffClassifier(threshold=0.5)  # would say NOT staff (no observations)
     vlm = FakeVLM(raise_on_staff=True)  # must NOT be called on a cache hit
     decider = _decider(heuristic, vlm, cache)

@@ -55,6 +55,8 @@ def main() -> None:
     tracker = PersonTracker(
         settings.yolo_model, settings.detection_confidence, settings.person_class_id,
         tracker_cfg=settings.tracker_cfg,
+        imgsz=settings.detector_imgsz,
+        iou=settings.detection_iou,
     )
     gallery = ReIDGallery(
         max_distance=settings.reid_max_distance, reentry_min_gap_ms=settings.reid_reentry_min_gap_ms

@@ -33,7 +33,9 @@ You need **Docker Desktop** installed. Then:
 docker compose up --build
 ```
 
-That starts everything. Once it's up:
+That starts everything. The detector **replays pre-generated events** from
+`data/events/behavior.jsonl` into the API — data appears on the dashboard within seconds, no
+YOLO model, CCTV clips, or VLM keys required.
 
 | What | URL |
 |------|-----|
@@ -43,25 +45,31 @@ That starts everything. Once it's up:
 | Prometheus | http://localhost:9090 |
 | Grafana dashboards | http://localhost:3000 |
 
-To stop it: `docker compose down`
+To stop it: `docker compose down` (add `-v` to also clear the database)
 
-### Run it fast (recommended for reviewers)
+### Run the detection pipeline (re-generate events)
 
-The detector runs YOLO on **CPU**, so give Docker some headroom or the first run drags:
+To re-run the full YOLO + ByteTrack detection over CCTV clips:
 
-- **Give Docker ~8 CPUs / 10 GB.** Docker Desktop → **Settings → Resources** (Hyper-V backend); or on
-  the **WSL2 backend** put this in `C:\Users\<you>\.wslconfig`, then run `wsl --shutdown`:
-  ```ini
-  [wsl2]
-  processors=8
-  memory=10GB
-  ```
-- The **first `--build` is heavy** (YOLO/Torch downloaded once, then cached); later runs are quick.
-- **No manual steps** — the stack feeds itself. The numbers **appear progressively** as each camera
-  is processed (a few minutes on CPU); `/stores/ST1008/metrics` fills in while detection runs.
-- **Inspect the raw events:** the detector also writes every event to **`data/events/behavior.jsonl`**
-  on the host (newline-delimited JSON), **growing incrementally** as each camera finishes — open it to
-  see exactly what the pipeline emitted.
+1. **Place CCTV clips** in `docs/raw/Store_CCTV_Clips/` (gitignored).
+2. Run with detect mode:
+   ```bash
+   DETECTOR_MODE=detect docker compose up --build
+   ```
+   Or locally (faster iteration, needs `.venv` with deps):
+   ```bash
+   python scripts/run_detection.py
+   ```
+3. Events are written to **`data/events/behavior.jsonl`** and auto-POSTed to the API.
+4. To enable VLM staff/zone classification, also set `VLM_ENABLED=true` and
+   a provider key (`GROQ_API_KEY` or `GEMINI_API_KEY`) in a `.env` file.
+
+### Tips for reviewers
+
+- **Give Docker ~8 CPUs / 10 GB.** Docker Desktop → **Settings → Resources**.
+- The **first `--build` is heavy** (YOLO/Torch downloaded once, then cached).
+- **Inspect the raw events:** open `data/events/behavior.jsonl` (newline-delimited JSON)
+  to see exactly what the pipeline emitted.
 
 ---
 

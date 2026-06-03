@@ -26,16 +26,23 @@ STORE_CONFIG = StoreConfig(
     store_id="ST1009",
     store_name="Store_2",
     clips_dir="Store_2/Store 2",
-    # All four clips normalised to ONE synthetic day (their real dates differ). Same calendar day as
-    # ST1008 so both stores fall in the same query window; ~13:30 IST matches the entry-2 overlay.
-    clip_start_iso="2026-04-10T13:30:00+05:30",
+    # Store_2 clips are on 10-Apr-2026 ~20:00 (deduced from the overlay).
+    clip_start_iso="2026-04-10T20:00:00+05:30",
+    staff_uniform_hint=(
+        "CRITICAL STAFF INDICATOR: Store staff exclusively "
+        "wear bright, solid pink polo shirts or t-shirts. "
+        "Customers wearing red, orange, white, grey, "
+        "or patterned clothing are NOT staff. "
+        "If the person is not clearly wearing a solid "
+        "pink shirt, classify them as 'customer'."
+    ),
+    staff_heuristic_color="pink",
     # Crowd tuning (ADR-0030): Store_2 is BUSY (~22 customers vs Store_1's 2), so it needs a
     # stricter Re-ID distance (less over-merging) and a shorter dwell than the global defaults.
     # Calibrated to the ground truth (22+3): a sweep gave 0.55->6, 0.35->20, 0.30->23, 0.25->37
     # unique; 0.30 + 800ms lands at ~23 (~25). Store_1 keeps the global 0.55/2000 (its own truth).
-    reid_max_distance=0.33,
+    reid_max_distance=0.35,
     min_zone_dwell_ms=800,
-    staff_uniform_hint="Store staff wear pink shirts; shoppers are in mixed casual colors.",
     cameras=[
         CameraConfig(
             camera_id="ENTRY1",
@@ -47,7 +54,7 @@ STORE_CONFIG = StoreConfig(
             # OUTSIDE. The entrance line sits on the wood edge so only true interior foot-points
             # count; the tiled/white mall area above is pass-by.
             entrance_line=EntranceLine(
-                x1=140, y1=535, x2=760, y2=495, inside_sign=1, calibrated=True
+                x1=140, y1=555, x2=760, y2=515, inside_sign=1, calibrated=True
             ),
         ),
         CameraConfig(
@@ -58,7 +65,7 @@ STORE_CONFIG = StoreConfig(
             fps=25.0,
             # Calibrated: white strip is outside; line sits on the wood edge (interior below).
             entrance_line=EntranceLine(
-                x1=150, y1=560, x2=740, y2=500, inside_sign=1, calibrated=True
+                x1=150, y1=580, x2=740, y2=520, inside_sign=1, calibrated=True
             ),
         ),
         CameraConfig(

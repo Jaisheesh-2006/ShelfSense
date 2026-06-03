@@ -7,17 +7,19 @@
 > Last updated: 2026-06-03.
 
 ## ⚠️ Dataset changed (2026-06-02) — re-grounding underway (ADR-0024)
+
 The team delivered a **corrected dataset** (old single-store Brigade data removed); the wiki is
 re-derived ([[GROUND_TRUTH]] §0). Decision status:
+
 1. ✅ **Event schema — DECIDED (user): keep the flat PDF page-5 schema** (what the pipeline must emit;
    the richer `sample_events.jsonl` signals are not adopted). We already emit this → **no code change**.
    ([[EVENT_SCHEMA]])
-3. ✅ **POS loader — REWORKED (done)** for the new 7-col CSV: basket = distinct `order_time` (24),
+2. ✅ **POS loader — REWORKED (done)** for the new 7-col CSV: basket = distinct `order_time` (24),
    value = Σ `total_amount` (**₹34,331.71**), `invoice_number` dropped. Plus a **brand → department
    taxonomy** (ADR-0025, `departments.py`) so the API now reports **both `top_brand` and
    `top_department`** (real CSV → top brand Faces Canada, top dept makeup; split makeup 14/skincare
    5/bath_and_body 2/…). Validated against the real CSV; ruff + **115 tests** + frontend `tsc` clean.
-2. ✅ **Second store — PLUMBING DONE (ADR-0026 + ADR-0028):** the **dashboard switcher + `GET /stores`**
+3. ✅ **Second store — PLUMBING DONE (ADR-0026 + ADR-0028):** the **dashboard switcher + `GET /stores`**
    were already done; now the **detection half** is too. Stores are a **pluggable auto-discovered
    registry** (`shelfsense_common.stores`, one file per store) — the detector loops `all_stores()`,
    each with its own Re-ID/staff/zone/clip-start, tagging events with the right `store_id`. **ST1009
@@ -26,13 +28,13 @@ re-derived ([[GROUND_TRUTH]] §0). Decision status:
    corrected dataset's Store_1 filenames/paths were also fixed, and the **CCTV mount repointed** to
    `Store_CCTV_Clips/`. Adding a future store = drop a `stores/<id>.py` + clips folder. **Remaining:**
    the live two-store generation run (pending `GEMINI_API_KEY`) → commit `events.jsonl` + VLM cache.
-5. ✅ **VLM staff/zone classification — LOGIC DONE (ADR-0027):** optional **Gemini Flash** used **only in
+4. ✅ **VLM staff/zone classification — LOGIC DONE (ADR-0027):** optional **Gemini Flash** used **only in
    the offline detection pass** to classify **staff vs customer** (per visitor, replaces the dark-uniform
    heuristic that breaks on Store_2's pink staff) and **product-camera zones** (per camera). `VLM_ENABLED`
    is **off by default** (gate-safe: no key/network for `docker compose up`); cached + heuristic fallback.
    Code/tests landed (`detector/app/vlm.py`, `staff_decider.py`, `zone_resolver.py`; **138 tests**). The
    actual two-store generation run is **pending the user's `GEMINI_API_KEY`**.
-4. ⏳ **Demographics/groups — PENDING (deferred):** default per D1 is **no** (full-face-blurred footage).
+5. ⏳ **Demographics/groups — PENDING (deferred):** default per D1 is **no** (full-face-blurred footage).
 6. ✅ **Counting approach changed — ALL cameras, quality-gated (ADR-0029, refines ADR-0011):** unique
    visitors are now counted from **every camera** (Re-ID-deduped), but only for **solid tracks** —
    sustained + on-floor + large-enough box + **store-interior side of the entrance line** (mall pass-by
@@ -40,7 +42,7 @@ re-derived ([[GROUND_TRUTH]] §0). Decision status:
    literal "face-visible" gate was **rejected** (overhead CCTV + privacy-blurred faces ⇒ would
    undercount). ⚠ **The Store_1 "2 customers" figure must be re-validated on the next full run** — this
    changed the counting path and can't be re-checked without running YOLO.
-See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024/0029.
+   See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024/0029.
 
 7. ✅ **Store_2 pipeline RUN against ground truth (ADR-0030):** full chain executed — calibrated both
    entrance lines, per-store density tuning (`reid_max_distance=0.30`, `min_zone_dwell_ms=800`, baked in
@@ -55,14 +57,28 @@ See [[RISKS]] R-12..R-16, [[DECISIONS]] ADR-0024/0029.
    23 visitors. Full run: **23 staff calls + 1 zone call, 0 failures**. VLM result **4 staff / 19
    customers** (vs 3/22); zone relabelled `makeup_aisle → skincare_aisle`. Proof images in
    `docs/wiki/frames/` (`store2_entrance_lines.jpg`, `store2_customers_staff.jpg`).
+9. ✅ **Store_2 calibration + accuracy tuning (2026-06-03):** entrance lines pulled back so the
+   **white strip stays outside** (wood edge is inside), Re-ID distance nudged to **0.35** to merge
+   duplicate visitors, and offline detector defaults raised for accuracy (**imgsz 768** for crowd separation,
+   ByteTrack `new_track_thresh`=0.60 to reject noise). A **store-specific staff uniform hint** ("pink shirts")
+   was injected into the VLM prompt.
+   *Validation:* **23 unique visitors (matching 22+3 ground truth exactly)**. 164 zone events, 11 entries, 6 exits. The tracking and Re-ID logic is solid under crowds.
+10. ✅ **Pluggable Per-Store Staff Heuristic (2026-06-03):** The VLM prompt was upgraded to a
+    structured expert-analyst persona. The old `enable_heuristic_staff` boolean was **replaced** with
+    a fully pluggable `staff_heuristic_color` parameter (`str | None`, default `"black"`). A
+    `COLOR_HEURISTICS` registry in `staff.py` maps color names to HSV bounds + body-part selectors:
+    - `"black"` → checks both upper and lower body darkness (Store 1 staff in full black).
+    - `"pink"` → checks only upper body for pink hue (Store 2 staff in pink polo).
+    - `None` → disables the heuristic entirely (VLM-only).
+    Adding a new store with e.g. blue uniforms = one line in the registry + `staff_heuristic_color="blue"`
+    in the store config. `StaffDecider` always falls back to the heuristic (no toggle); the color score
+    is simply 0.0 when `staff_heuristic_color=None`. **149 tests pass; ruff clean.**
 
-**Single next action:** **re-validate Store_1's count** under the new all-cameras counting (ADR-0029)
-on a full run (Store_1 can use the Groq VLM too now), then a clean-machine gate dry-run
-(`docker compose up`) covering the mount/multi-store/counting changes.
+**Single next action:** **re-run Store_1 (ST1008)** with the new global settings (higher accuracy thresholds and `imgsz 768`) to ensure the changes did not degrade its 2-customer ground truth baseline, then do a clean-machine gate dry-run (`docker compose up`).
 
 ## Current phase
 
-> **Snapshot below is PRE-2026-06-02 (the old dataset).** It remains true *as logic/architecture* but the
+> **Snapshot below is PRE-2026-06-02 (the old dataset).** It remains true _as logic/architecture_ but the
 > POS figures (₹44,920) and "validated" data numbers are from the old data — see the ⚠ banner above and
 > [[GROUND_TRUTH]] §0 for what the corrected dataset changes.
 
@@ -76,6 +92,7 @@ postgres, prometheus, grafana) **plus `frontend`** (nginx, :8080) — the detect
 manual steps.
 
 Recent work, newest first:
+
 - **Redis removed entirely (ADR-0023).** It was vestigial — only the `/readyz` probe pinged it, with no
   caching job. Dropped the `redis` compose service, the `redis` Python dep, the `redis_client.py` module,
   the `REDIS_*` config/env, and the readiness check (now Postgres-only). Resolves the long-standing
@@ -91,7 +108,7 @@ Recent work, newest first:
   numbers climb live as detection runs.
 - **CPU-only torch + pip cache (ADR-0017)** + **detector throughput tuning** (sample_fps 10→5,
   imgsz 640→480, ADR-0019) for a fast build and a ~10-min-budget run.
-- **2.10 per-camera incremental flush (ADR-0018)** so endpoints fill in *as detection runs*;
+- **2.10 per-camera incremental flush (ADR-0018)** so endpoints fill in _as detection runs_;
   **2.9 compose cleanup (ADR-0016)**.
 
 **⚠ The one pending check:** re-validate `unique_visitors`=2 / funnel 2→2→0→0 on a clean
@@ -103,6 +120,7 @@ the optional startup **seed** (set aside) for an instant-on demo. (**Redis's fat
 removed, ADR-0023.**)
 
 ### Dashboard (done) — live React UI + ShelfSense design system (ADR-0020)
+
 - **`frontend/`** Vite + React + TS SPA polling all five store endpoints every 4 s: conversion ring,
   funnel, zone heatmap, anomalies, feed-health — live numbers climb as detection runs. **Custom flat
   design system** (CSS tokens, no UI lib, **no gradients**, white-forward, one blue + one teal accent,
@@ -113,8 +131,9 @@ removed, ADR-0023.**)
   tests green; compose parses — the stack is now **seven** services (added `frontend`).
 
 ### Slice 2.10 (done) — per-camera incremental flush (ADR-0018)
+
 - **Problem the real run exposed:** the auto-feed POSTed only at `batch_size` (500) or final exit, and
-  a full pass is ~131 events, so the *single* POST landed at the end of a ~24-min CPU run — endpoints
+  a full pass is ~131 events, so the _single_ POST landed at the end of a ~24-min CPU run — endpoints
   read zero for ~24 min, then jumped. A 10-min reviewer would see zeros and bail.
 - **Fix:** `flush()` is now on the `EventSink` Protocol + `JsonlEventSink` + `FanOutSink` (it already
   existed on `HttpEventSink`); the detector's `run_once` calls `sink.flush()` **after each camera** and
@@ -126,6 +145,7 @@ removed, ADR-0023.**)
   is still the instant-on net.
 
 ### Slice 2.9 (done) — compose cleanup (ADR-0016)
+
 - Removed the **`redpanda`**, **`tracker`**, and **`analytics`** services from `docker-compose.yml`
   (legacy: broker dropped in ADR-0005; tracker/analytics were Phase-1 heartbeat stubs whose work now
   lives in `detector` + `api`). Deleted the orphaned `services/tracker/` and `services/analytics/`
@@ -137,6 +157,7 @@ removed, ADR-0023.**)
   102 tests pass**. The clean-machine `docker compose up --build` dry-run is the user's next step.
 
 ### Slice 2.8 (done) — detector → API auto-feed (ADR-0015)
+
 - **`HttpEventSink`** (`common/sinks.py`): buffers `BehaviorEvent`s and POSTs batches of ≤500 to
   `{API_BASE_URL}/events/ingest` (stdlib `urllib`, no new dep). Bounded wait-for-ready on enter, per-batch
   retry+backoff, **non-fatal** on failure (logs + drops; JSONL still has it → no crash). Idempotent ingest
@@ -149,6 +170,7 @@ removed, ADR-0023.**)
   txns. `scripts/ingest_events.py` demoted to a dev/replay fallback. New knobs in `.env.example`.
 
 ### Slice 2.7 (done) — heatmap + anomalies + health (ADR-0014)
+
 - **Pure logic in `common/analytics.py`:** `compute_heatmap` (per-zone distinct-customer visits + avg
   dwell, **normalised 0–100** to the busiest zone; `data_confidence` flag), `detect_anomalies`
   (QUEUE_SPIKE / CONVERSION_DROP / DEAD_ZONE with severity + `suggested_action`), `feed_status` (lag +
@@ -166,6 +188,7 @@ removed, ADR-0023.**)
   +5 API); ruff clean. New config knobs (anomaly thresholds, open hours, health) in `.env.example`.
 
 ### Slice 2.6 (done) — API ingest + core metrics (ADR-0013)
+
 - **Renamed API package `app` → `shelfsense_api`** (both detector + api had a top-level `app` that
   collided on the test path, blocking API tests). Dockerfile now runs `uvicorn shelfsense_api.main:app`;
   `services/api` added to pytest `pythonpath`. Old `/api/v1/*` (`business.py`) **retired** (ADR-0005).
@@ -189,6 +212,7 @@ removed, ADR-0023.**)
   `test_api`); ruff clean. `scripts/ingest_events.py` replays the JSONL to a running API.
 
 ### Slice 2.5 (done) — billing queue + POS correlation (ADR-0012)
+
 - **POS loader** (`common/shelfsense_common/pos_loader.py`) + **`Transaction` contract** (`contracts/pos.py`):
   Brigade CSV → **24 transactions** (one per order_id), `order_date`+`order_time` parsed as **IST → UTC**,
   `amount` = sum of the order's **GMV** (day total **₹44,920**, reconciles with [[GROUND_TRUTH]] §2).
@@ -214,11 +238,13 @@ removed, ADR-0023.**)
 ### Slice 2.4b (done) — dark-uniform staff, floor mask, entrance=footfall-only
 
 ### Refined ground truth (user, 2026-06-01)
+
 The **7 people are store-wide** (all cameras), splitting **2 customers (grey + violet tops) + 5 staff
 (complete black uniform)**. CAM4 (stockroom) is **empty** the whole window; CAM5 has a **mirror** that can
-double-detect its 2 staff. This reframed the goal: the conversion denominator is *customers* = **2**.
+double-detect its 2 staff. This reframed the goal: the conversion denominator is _customers_ = **2**.
 
 ### Slice 2.4b (done) — dark-uniform staff, floor mask, entrance=footfall-only
+
 - **Staff = dark-uniform appearance (ADR-0009):** `detector/app/staff.py` — `uniform_darkness` = min of
   upper/lower-body dark-pixel fraction (HSV V ≤ `staff_dark_v_max=70`, central column), reusing the Re-ID
   crop; `StaffClassifier` flags staff when mean ≥ `staff_darkness_threshold=0.50`. Replaces the vague 90 s
@@ -242,11 +268,13 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   — reproduces the live 2-customers + 3-staff split for visual verification).
 
 ### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
+
 - **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram
   `appearance_signature` + `signature_distance` + pure `ReIDGallery` (nearest-match within `reid_max_distance`,
   else mint; re-match after a gap ⇒ `REENTRY`). Lightweight, offline-safe — no extra model.
 
 ### Slice 2.4 (done) — Re-ID, REENTRY, staff, tuned tracking
+
 - **Appearance Re-ID** (`detector/app/reid.py`, ADR-0008, user chose Option 1): HSV colour-histogram
   `appearance_signature` + `signature_distance` + pure `ReIDGallery` (nearest-match within `reid_max_distance`,
   else mint; re-match after a gap ⇒ `REENTRY`). Lightweight, offline-safe — no extra model.
@@ -264,8 +292,9 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   artifact = 146 events, **9 unique visitors**.
 
 ### Slice 2.3 (done) — visitor registry + zones
+
 - **VisitorRegistry** (`detector/app/visits.py`): one `visitor_id` per `(camera, track)` on first sighting
-  + a shared per-visitor `session_seq`. Single source of identity (crossing & zone logic look it up).
+  - a shared per-visitor `session_seq`. Single source of identity (crossing & zone logic look it up).
 - **ZoneTracker** (`detector/app/zone_tracker.py`): pure state machine — `ZONE_ENTER` after `min_zone_dwell`
   (2s, noise filter), `ZONE_DWELL` every 30s (running dwell), `ZONE_EXIT` after `zone_exit_grace` absence
   (total dwell); `flush()` closes tracks at clip end. Camera-level zone (PD-4).
@@ -277,6 +306,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   wrote 163 schema-valid events to `data/events/behavior.jsonl` (70 ENTER / 70 EXIT / 23 DWELL).
 
 ### Slice 2.2 (done) — tracking + ENTRY/EXIT in the prescribed schema
+
 - **Prescribed schema:** `BehaviorEvent` (flat, 8 `BehaviorEventType`s, `EventMetadata`) in
   `common/contracts/behavior.py` — UTC ISO-8601 timestamps, `zone_id` null for ENTRY/EXIT, validators
   enforce both. This is now the emitted/ingested contract; the old envelope (`events.py`) is internal.
@@ -302,6 +332,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   `tracker_sample_fps` 10, `crossing_confirm_frames` 2, `clip_start_iso` ~20:10 IST.
 
 ### Deliverables + wiki reconciliation (2026-05-31)
+
 - **DESIGN.md** (784w) + **CHOICES.md** (640w) at repo root — production-grade, structured, with
   AI-Assisted Decisions / 3 decisions + trade-offs. Prompt blocks in all test files reformatted to
   **Task/Context/Constraints/Output**. 13 tests pass.
@@ -313,6 +344,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
   fixes conflicts and removes superseded content on demand.
 
 ### Re-alignment (2026-05-31, after reading the Problem Statement PDF)
+
 - PDF **dataset description was a print mistake** — `raw/` (Brigade, 5 cams) is final. Spec's
   schema/endpoints/scoring/edge-cases/North-Star **are authoritative**.
 - New canonical: [[SPEC]]. **Reversed PD-5** → Re-ID required (`visitor_id`, `REENTRY`, cross-cam dedup).
@@ -323,6 +355,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
 - **Code impact (not yet done):** refactor `common.contracts.events` to the new schema; replace api `/api/v1/*` with the prescribed endpoints; reorganize tracker/analytics into the pipeline + API; retire the broker in compose. Slice 2.1's YOLO detection is reused; its emission changes.
 
 ### Slice 2.1 (done) — detector sees people & emits events
+
 - `common/stream.py`: `EventProducer` (confluent-kafka, idempotent, keyed, JSON) — lazy import so api stays slim.
 - `detector/app/detect.py`: `PersonDetector` (Ultralytics YOLO, lazy) + pure `boxes_to_detections` (person class + conf filter, xyxy→xywh).
 - `detector/app/main.py`: loops customer cameras (skips CAM4 stockroom) via `VideoFrameSource` → detect → publish `detection.created` to Redpanda, keyed by camera; idles after one pass (recorded clips). Config: `detector_max_frames`, `detector_reprocess`.
@@ -330,6 +363,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
 - **Verified:** preview overlays show boxes on real people (`docs/wiki/frames/CAM_*_det_*.jpg`); ran stack and consumed `detection.created` — real structured events (CAM1=20,CAM2=45,CAM3=7,CAM5=11 dets over 10 frames each), frame_id/ts_ms confirm 5 fps. 13 unit tests pass.
 
 ### Slice 2.0 (done) — calibration + frame reader
+
 - `services/detector/app/frames.py`: `VideoFrameSource` (context-managed video reader, configurable
   `sample_fps`, yields `Frame(index, ts_ms, image)`) + pure `compute_stride()`. Validated on real
   CAM 3 (1920×1080 @ 29.97 fps, stride=6 at 5 fps).
@@ -340,6 +374,7 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
 - Deps installed in `.venv`: opencv-python-headless, numpy, pytest. `services/detector/requirements.txt` records CV deps.
 
 ## Done
+
 - Read & internalized [[GROUND_TRUTH]] from `docs/raw/` (5 cameras, CSV = 24 txns/day, eval rubric, floor plan).
 - Directory structure + root files; LLM-wiki (Karpathy) pattern; production-grade CLAUDE.md.
 - Frames extracted & inspected → camera→area map; floor plan read ([[GROUND_TRUTH]] §1, §4).
@@ -358,8 +393,10 @@ double-detect its 2 staff. This reframed the goal: the conversion denominator is
     `/readyz` 200, endpoints return honest computed zeros, **Prometheus scrapes api = up**. Gate ✅.
 
 ## ▶ Next action
+
 **D1 (schema = flat page-5) and D3 (POS loader rework) are DONE.** Remaining ADR-0024 items, to discuss
 with the user next:
+
 - **D2 — Store_2:** decide whether to process it (repoint the detector to `Store_CCTV_Clips/Store_1` +
   add `Store_2`; calibrate its two entrances + zones; tag a distinct `store_id`) or document out-of-scope.
 - **D4 — Demographics/groups:** default **no** (full-face-blurred footage); confirm or revisit.
@@ -367,12 +404,13 @@ with the user next:
 After D2 lands: re-run the clean-machine **gate dry-run** end-to-end (detector → API → endpoints) on the
 corrected clips, then resume the Phase-3 polish below.
 
-— Prior status (still true *as logic* on Store_1): every prescribed endpoint exists, the stack feeds
+— Prior status (still true _as logic_ on Store_1): every prescribed endpoint exists, the stack feeds
 itself (2.8), compose is clean (2.9 / no-Redis 0023), ids are deterministic, and the clean-machine gate
 dry-run PASSED on the **old** data. ⚠ The detector's compose mount still points at the old
 `./docs/raw/CCTV Footage/...` path, which no longer exists — fixing that is part of D2.
 
 Then Phase 3 **polish + packaging** ([[TASKS]] Phase 3):
+
 1. ✅ **Redis's fate decided — removed** (ADR-0023). It was vestigial (only `/readyz` pinged it); rather
    than invent a caching job we dropped it to keep the gate path lean. `/readyz` is now Postgres-only.
 2. **Structured-logging field pass** — `trace_id, store_id, endpoint, latency_ms, status_code` per
@@ -383,6 +421,7 @@ Then Phase 3 **polish + packaging** ([[TASKS]] Phase 3):
 6. Keep `DESIGN.md`/`CHOICES.md` + [[INTERVIEW_QA]] in sync (ongoing).
 
 ## Notes / env
+
 - Local: `.venv` has pydantic/fastapi/etc.; OpenCV installed for frame work. Real runtime = containers.
 - Run the stack: `docker compose up --build` (api :8000, prometheus :9090, grafana :3000). Postgres internal-only.
 - **Detector build (ADR-0017):** CPU-only torch (PyTorch CPU index) + BuildKit pip cache — the detector

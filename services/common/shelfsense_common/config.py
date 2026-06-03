@@ -42,7 +42,8 @@ class Settings(BaseSettings):
 
     # --- Detector ---
     yolo_model: str = "yolov8n.pt"
-    detection_confidence: float = 0.30  # lower conf to recover close/partial boxes in crowded frames
+    # lower conf to recover close/partial boxes in crowded frames
+    detection_confidence: float = 0.30
     detection_iou: float = 0.85  # higher IoU keeps nearby boxes (helps split adjacent people)
     person_class_id: int = 0  # COCO 'person'
     cctv_dir: str = "/data/cctv"  # where CCTV clips are mounted in the container
@@ -51,6 +52,11 @@ class Settings(BaseSettings):
     detector_sample_fps: float = 5.0  # frames sampled per second (see frames.py)
     detector_max_frames: int = 0  # cap sampled frames per clip (0 = whole clip); for quick runs
     detector_reprocess: bool = False  # if False, process each clip once then idle (no duplicates)
+    # Mode: "replay" reads the pre-generated JSONL and POSTs to the API
+    # (fast, no YOLO/clips needed). "detect" runs the full YOLO pipeline
+    # over CCTV clips. Default is replay so `docker compose up` works
+    # instantly with no model weights, clips, or VLM keys.
+    detector_mode: str = "replay"  # "replay" or "detect"
 
     # --- Tracking / behavioural events (Slice 2.2) ---
     # Frames sampled per second of video for tracking. Lowered 10->5 (ADR-0019) to roughly halve the
@@ -60,7 +66,7 @@ class Settings(BaseSettings):
     tracker_sample_fps: float = 10.0
     # YOLO inference image size, longest side. Higher = better separation in crowded frames, slower.
     # Must be a multiple of 32 (stride). Offline runs trade time for accuracy.
-    detector_imgsz: int = 640
+    detector_imgsz: int = 768
     tracker_cfg: str = "bytetrack_shelfsense.yaml"  # tuned ByteTrack (less fragmentation)
     crossing_confirm_frames: int = 2  # frames a side flip must persist (flicker debounce)
     # Counting quality gate (ADR-0029): a person counts toward visitors only as a SOLID track —

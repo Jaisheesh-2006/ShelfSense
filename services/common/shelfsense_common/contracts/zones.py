@@ -123,7 +123,8 @@ class StoreConfig(BaseModel):
     # calibration from disturbing another's (ADR-0030).
     reid_max_distance: float | None = None
     min_zone_dwell_ms: int | None = None
-
+    detector_imgsz: int | None = None
+    staff_heuristic_color: str | None = "black"  # e.g., "black", "pink", or None to disable
     def camera(self, camera_id: str) -> CameraConfig | None:
         return next((c for c in self.cameras if c.camera_id == camera_id), None)
 
