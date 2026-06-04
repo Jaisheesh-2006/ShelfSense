@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from shelfsense_common.config import get_settings
 from shelfsense_common.logging import configure_logging, get_logger
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from shelfsense_api.db import init_db
 from shelfsense_api.metrics import HTTP_LATENCY, HTTP_REQUESTS, render_metrics
@@ -84,13 +85,21 @@ async def observe_requests(request: Request, call_next: Callable[[Request], Awai
         latency_ms = int((time.perf_counter() - start) * 1000)
         route = request.scope.get("route")
         path = getattr(route, "path", request.url.path)
-        
+        # Per-request context the spec asks for: store_id (from the path) and event_count (set by
+        # the ingest handler on request.state). Both share this request's scope, so they are
+        # readable here regardless of which route handled it; they're None for requests that lack
+        # them (e.g. store_id on /events/ingest, event_count on a GET).
+        store_id = (request.scope.get("path_params") or {}).get("store_id")
+        event_count = getattr(request.state, "event_count", None)
+
         # Log the structured request completed event
         if path not in ("/metrics", "/healthz", "/readyz"):
             log.info(
                 "request_completed",
                 endpoint=path,
                 method=request.method,
+                store_id=store_id,
+                event_count=event_count,
                 latency_ms=latency_ms,
                 status_code=status_code,
             )
@@ -117,6 +126,27 @@ async def validation_exception_handler(
                 "code": "validation_error",
                 "message": "Request validation failed.",
                 "details": details,
+            }
+        },
+    )
+
+
+@app.exception_handler(OperationalError)
+@app.exception_handler(InterfaceError)
+async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map DB connectivity failures to a structured 503 (no stack trace leaked to the client).
+
+    A reviewer pulling the DB out from under a running API should get an honest "try again",
+    not an opaque 500 — graceful degradation (SPEC Part C). Connection/driver errors raised by
+    SQLAlchemy land here; genuine bugs still fall through to the 500 handler below.
+    """
+    log.warning("database_unavailable", path=request.url.path, error=str(exc))
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "code": "database_unavailable",
+                "message": "The database is temporarily unavailable. Please retry shortly.",
             }
         },
     )

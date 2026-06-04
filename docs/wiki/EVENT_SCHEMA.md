@@ -56,8 +56,10 @@ Field rules: `event_id` unique (UUIDv4); `timestamp` UTC ISO-8601; `zone_id` nul
 ## visitor_id (Re-ID)
 A token unique **per visit session**, assigned to a tracked customer on **first detection in a customer
 area** — not only at `ENTRY`, because on short clips most shoppers are already inside (ADR-0007). It
-survives short occlusion (within-camera tracking), is **deduplicated across overlapping cameras**
-(CAM1/CAM2/CAM3, Slice 2.4), and a returning shopper produces `REENTRY` under the **same** `visitor_id` —
+survives short occlusion (within-camera tracking) and track fragmentation (a per-camera **motion
+tracklet-stitch** re-links a person split front/back into one id, ADR-0037), is **deduplicated across
+overlapping cameras** (CAM1/CAM2/CAM3, appearance Re-ID as the cross-camera fallback, Slice 2.4), and a
+returning shopper produces `REENTRY` under the **same** `visitor_id` —
 never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the conversion denominator). See
 [[EDGE_CASES]], [[BUSINESS_RULES]].
 
@@ -97,8 +99,8 @@ Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
 `shelfsense_common/contracts/behavior.py`. Emitted from real footage to JSONL by the detector:
 `ENTRY`/`EXIT` on the entrance door; `ZONE_ENTER`/`DWELL`/`EXIT` on **all** customer cameras (entrance
 contributes interior visitors too since ADR-0029); `REENTRY` + `is_staff` (per-store uniform colour /
-optional VLM, ADR-0009/0032/0027) + **cross-camera de-duplicated** `visitor_id` via appearance Re-ID
-(2.4, ADR-0008); **`BILLING_QUEUE_JOIN` with
+optional VLM, ADR-0009/0032/0027) + `visitor_id` made stable within a camera by **motion tracklet-stitching**
+(ADR-0037) and **cross-camera de-duplicated** via appearance Re-ID as the fallback (2.4, ADR-0008/0036); **`BILLING_QUEUE_JOIN` with
 `queue_depth`** on CAM5 (2.5, ADR-0012; `BILLING_QUEUE_ABANDON` derived in conversion). Validators
 enforce a tz-aware UTC timestamp and `zone_id=None` for ENTRY/EXIT.
 

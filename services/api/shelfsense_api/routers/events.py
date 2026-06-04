@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, ValidationError
 from shelfsense_common.contracts import BehaviorEvent
 
@@ -48,7 +48,9 @@ def _first_error(exc: ValidationError) -> str:
 
 
 @router.post("/events/ingest", response_model=IngestResponse)
-def ingest_events(payload: IngestRequest) -> IngestResponse:
+def ingest_events(payload: IngestRequest, request: Request) -> IngestResponse:
+    # Surface the batch size for the access log (the middleware reads request.state.event_count).
+    request.state.event_count = len(payload.events)
     valid: list[BehaviorEvent] = []
     errors: list[IngestError] = []
     for index, raw in enumerate(payload.events):

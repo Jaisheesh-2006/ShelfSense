@@ -1,0 +1,91 @@
+name: CI
+
+# Mirrors the local quality gates (SPEC Part C: structured tests, edge cases, >70% coverage,
+# one-command containerisation). Runs on every push and PR to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch/PR cancels the in-flight run — saves runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check .
+      # Note: `ruff format --check .` is intentionally not enforced yet — 20 legacy files predate
+      # `ruff format`. Apply `ruff format .` in a dedicated cleanup commit, then add it here.
+
+  test:
+    name: Tests + coverage gate (>=70%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # cv2 (pulled transitively by ultralytics) imports cleanly with these system libs present.
+      - name: Install system libs for OpenCV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+      # CPU-only torch first (ADR-0017) so ultralytics reuses the ~200 MB CPU wheel instead of
+      # pulling the ~2 GB CUDA build we never use.
+      - name: Install CPU-only PyTorch
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project + dev dependencies
+        run: |
+          pip install ./services/common \
+            -r services/api/requirements.txt \
+            -r services/detector/requirements.txt \
+            -r requirements-dev.txt
+      # Ensure cv2 resolves to the headless build (ultralytics may pull full opencv-python, which
+      # needs an X stack) — mirrors the detector Dockerfile.
+      - name: Force headless OpenCV
+        run: |
+          pip uninstall -y opencv-python opencv-python-headless || true
+          pip install opencv-python-headless
+      - name: Run test suite (coverage gate enforced via pyproject addopts)
+        run: pytest
+
+  frontend:
+    name: Frontend build (Part E dashboard)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  compose-validate:
+    name: docker compose config parses (acceptance-gate guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose config --quiet

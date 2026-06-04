@@ -11,10 +11,13 @@
 api · **replayer** · prometheus · grafana · **frontend** (:8080); the detector is opt-in behind a
 `detect` profile. Every prescribed endpoint returns real, internally-consistent, store-aware data.
 
-- **Detection pipeline** (`services/detector`): YOLOv8n + ByteTrack + colour-histogram Re-ID, **multi-store**
-  via the registry. Counting spans **all cameras**, gated to solid store-interior tracks (entrance line +
-  box-size + floor mask; ADR-0029). Per-store overrides: `reid_max_distance`, `min_zone_dwell_ms`,
-  `detector_imgsz`, `staff_heuristic_color`, `staff_uniform_hint`.
+- **Detection pipeline** (`services/detector`): YOLOv8n + ByteTrack → **per-camera motion tracklet-stitch
+  (ADR-0037)** → colour-histogram Re-ID gallery, **multi-store** via the registry. Counting spans **all
+  cameras**, gated to solid store-interior tracks (entrance line + box-size + floor mask; ADR-0029). The
+  stitcher (`association.py`) collapses fragmented ByteTrack ids into one local id by spatio-temporal
+  continuity *before* the gallery, fixing the within-camera over-split; the appearance gallery still does
+  cross-camera dedup (pluggable: `TRACK_ASSOCIATION=appearance` reverts to gallery-only). Per-store
+  overrides: `reid_max_distance`, `min_zone_dwell_ms`, `staff_heuristic_color`, `staff_uniform_hint`.
 - **Staff** = per-store uniform-colour heuristic (`black`/`pink`; ADR-0009/0032) with an optional **VLM**
   (Gemini **or** Groq; ADR-0027/0031) that overrides when confident. VLM is **off by default**, cached,
   gate-safe.
@@ -22,27 +25,46 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
   `skincare_aisle`).
 - **Two run modes (ADR-0033):** default `docker compose up` = **replayer** POSTs the committed
   `data/events/behavior.jsonl` (seconds, no YOLO/keys — the gate path); `--profile detect` (or
-  `DETECTOR_MODE=detect`) runs the full pipeline and regenerates events.
+  `DETECTOR_MODE=detect`) runs the full pipeline and regenerates events. The replay artifact is now
+  **git-tracked** (`.gitignore` negations) so the gate works on a fresh clone.
 - **API** (`services/api`): idempotent `POST /events/ingest`; per-store `GET /stores/{id}/{metrics,funnel,
   heatmap,anomalies}`, `GET /stores`, `/health`, Prometheus `/metrics`. Staff excluded (any-flag);
-  honest zeros + dormant anomalies; POS for **ST1008 only**.
+  honest zeros + dormant anomalies; POS for **ST1008 only**. Per-request structured log carries
+  `trace_id · store_id · endpoint · event_count · latency_ms · status_code`; DB-down degrades to a
+  structured **503** (not a 500).
+- **Tests:** 164 pytest (unit + 2 integration suites incl. a **pipeline-replay E2E** over the committed
+  events; `test_association.py` covers the stitcher 100%), coverage **84.5%** gated at **70%** (`pytest`
+  enforces; `requirements-dev.txt`).
 - **Frontend**: store switcher (polls only the visible store, 4 s); conversion ring, funnel, heatmap,
   anomalies, health, POS (top_brand/top_department/peak_hour).
 - **Stores:** **ST1008** Brigade (POS, ~2 customers GT) · **ST1009** Store_2 (no POS; busy, 22 cust + 3
   staff GT). Adding a store = drop `stores/<id>.py` + a clips folder (ADR-0028).
 
-## Headline results (honest)
+## Headline results (honest — motion-stitched local re-run, ADR-0037, 2026-06-04)
 
-- **Store_1 (ST1008):** unique customers = **2** (grey + violet on CAM2), funnel 2→2→0→0, conversion **0%**
-  on the 2-min clip (`data_confidence=low`; no sale in the window — demonstrated separately via
-  `demo_conversion.py`). POS day KPIs: **24 txns, ₹34,331.71**, top brand Faces Canada, top dept makeup.
-  ⚠ **Must re-validate** under the new global detector defaults (imgsz 768 / fps 10) on a full `detect` run.
-- **Store_2 (ST1009):** **~23 unique vs 25 ground truth** (per-camera BILLING=6/ENTRY1=5/ENTRY2=8/ZONE=7).
-  Staff/customer split via VLM is **approximate** (overhead CCTV hides uniforms → crop-sensitive). Proof
-  images: `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`.
+- **Store_1 (ST1008):** **7 people ✓** (GT 7), ENTRY/EXIT/REENTRY **0 ✓**. Staff split **4/3 vs true 5/2** —
+  one under-exposed staffer (colour 0.22) reads as customer; a marginal overhead call (unchanged — Store_1
+  was never the over-split problem). Conversion **0%** on the 2-min clip (`data_confidence=low`). POS day
+  KPIs: **24 txns, ₹34,331.71**, top brand Faces Canada.
+- **Store_2 (ST1009):** **22 unique vs 25 GT** (17 cust + 5 staff), footfall **ENTRY 11 · EXIT 5 · REENTRY
+  2**. **ADR-0037 motion stitching fixed the dominant error:** the ZONE staffer that was **4 ids → 1**;
+  ENTRY2 customers **exactly 8 ✓ (GT ~8)**; BILLING staff **exactly 2 ✓**; **footfall now matches GT
+  (~11/~5)**. Residual gap to 25 is *outside* association: **group-merge** (customers 17 vs 22, a detection
+  limit) + **cross-camera staff duplication** (5 vs 3 — appearance-bound, ADR-0036).
+- **Key findings:** appearance Re-ID **cannot** fix the over-split (ADR-0036: same-person front/back is
+  *farther* than different people — histogram 0.66 vs 0.61; ImageNet CNNs also overlap); **motion can** and
+  does (ADR-0037), per-camera. Store-wide honest output on a crowd = **head-count band + per-camera figures**.
 
 ## Recent decisions (newest first → see [[DECISIONS]])
 
+- **ADR-0037** tracking-based association (motion tracklet-stitch, default on): fixes the within-camera
+  over-split ADR-0036 deferred — Store_2 ZONE staffer 4 ids → 1, footfall now matches GT. Pluggable
+  (`TRACK_ASSOCIATION`), pure/gate-safe; appearance gallery kept as cross-camera fallback.
+- **ADR-0036** Re-ID over-split: learned embedder built (gate-safe, off by default) but appearance proven
+  non-discriminative on overhead CCTV → keep histogram, document the limit (superseded as the *fix* by
+  ADR-0037's motion association; the appearance finding stands).
+- **ADR-0035** REENTRY requires a prior EXIT (kills track-fragmentation false positives: 27→0, 19→2).
+- **ADR-0034** staff = VLM cross-store baseline + per-store colour **high-confidence override** (hybrid).
 - **ADR-0033** two run modes (replay default + opt-in detect profile).
 - **ADR-0032** per-store staff uniform colour (`COLOR_HEURISTICS` registry: black/pink) + VLM hint.
 - **ADR-0031** multi-provider VLM — added **Groq** (multimodal Llama-4 Scout); cleared what Gemini's
@@ -55,11 +77,15 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
 
 ## Open items / next action
 
-**Single next action:** run the full **`--profile detect`** pipeline on **both stores** with the current
-defaults (imgsz 768 / fps 10) to (a) **re-validate Store_1's 2-customer baseline**, (b) regenerate the
-committed `events.jsonl` + VLM cache for replay, then do a clean-machine `docker compose down -v && up
---build` gate dry-run.
+**Single next action:** committed `data/events/behavior.jsonl` is **regenerated** with the validated config
+(motion stitching ADR-0037 + histogram Re-ID + ADR-0034/0035, frame-verified ENTRY lines, global imgsz 768)
+— ST1008 106 events / ST1009 183 events, replay E2E green. Next: a clean-machine `docker compose down -v &&
+up --build` gate dry-run.
 
-Known limits (documented, not bugs): staff/customer split is camera-angle-limited on overhead CCTV;
-Store_2 count is ~8% under (weak colour-histogram Re-ID on a crowd — a learned embedding would close it);
-Store_2 has no POS → conversion N/A. Deferred: demographics/groups (full-face-blurred footage, D4).
+Known limits (documented, not bugs — [[GROUND_TRUTH]] §1, [[EDGE_CASES]], ADR-0036/0037): the within-camera
+**over-split is fixed** by motion association (ADR-0037); what remains is **cross-camera** identity (a
+roaming staffer counted per camera — needs a floor-plane homography to extend motion association across
+views; appearance is measured-unfixable, ADR-0036), **tight groups merge** at the box level (a detection
+limit — imgsz 960 didn't help, reverted), and the **staff split is ±1–2** at the margin. Store_2 has no POS
+→ conversion N/A. Deferred: demographics (full-face-blurred footage). The learned-embedder hook
+(`reid_backend=cnn`) remains as parked infrastructure.

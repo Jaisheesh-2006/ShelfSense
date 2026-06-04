@@ -67,12 +67,15 @@ set: **two entry cameras** plus a floor and a billing view.
   the full-day POS therefore still holds** (§2).
 - **Time-synchronized (Store_1):** burnt-in timestamps ~**20:10–20:11 on 10/04/2026** (matches the POS
   date), watermark "CP IP Cam" — a concurrent evening window. (Store_2 sync window not yet read frame-by-frame.)
-- **People in Store_1 (carried from the prior verified ground truth — same clips):** across the cameras
-  there are **2 customers (grey + violet tops) + 5 staff (complete black uniform)**. Staff signal =
-  the per-store uniform-colour heuristic (`black` here) and/or the VLM ([[DECISIONS]] ADR-0009/0032);
-  CAM 5 has a **mirror / backlit display** that double-detects (handled by a walkable-floor mask, ADR-0010);
-  the entrance view is dominated by **mall-corridor pass-by**, filtered by the entrance line + quality
-  gate (ADR-0029). Store_2 staff instead wear **bright pink** (`staff_heuristic_color="pink"`).
+- **People in Store_1 (verified ground truth — same clips):** across the cameras there are **2 customers
+  (grey + violet tops) + 5 staff (complete black uniform) = 7 people**. Staff signal = the VLM-baseline +
+  `black` colour-override hybrid ([[DECISIONS]] ADR-0009/0032/0034). **Local detection result:** unique
+  people **7 ✓**, ENTRY/EXIT/REENTRY **0 ✓** (nobody crosses the line; REENTRY fixed by ADR-0035). Staff
+  split **4/3 vs the true 5/2** — one staffer (violet-ish top, **colour 0.22**, badly under-exposed crop)
+  reads as a customer; the VLM was unsure too. A genuine marginal call on overhead CCTV (user-adjudicated).
+  CAM 5 has a **mirror / backlit display** that double-detects (walkable-floor mask, ADR-0010); the
+  entrance view is dominated by **mall-corridor pass-by**, filtered by the entrance line + quality gate
+  (ADR-0029). Store_2 staff instead wear **bright pink** (`staff_heuristic_color="pink"`).
 - **People in Store_2 (user-provided ground truth, watching the footage — authoritative):**
   **22 unique customers + 3 staff** across the store (Re-ID-deduped headline). Per-camera observations
   (flows, not unique counts):
@@ -84,19 +87,33 @@ set: **two entry cameras** plus a floor and a billing view.
     - **zone:** 1 staff; 2 customers come, then 3 customers; 1 staff; 1 person enters the staff room.
   Headline to validate the pipeline against: **22 customers, 3 staff (25 people total)** — a *busy* store
   vs Store_1's 2 customers, which stresses Re-ID de-duplication. Store_2 has **no POS** (no conversion).
-  - **Pipeline result (ADR-0030/0031):** with calibrated entrance lines + per-store tuning
-    (`reid_max_distance=0.35`, `dwell=800ms`, global `imgsz=768`) the detector reaches **~23 unique
-    people** (≈25; per-camera BILLING=6/ENTRY1=5/ENTRY2=8/ZONE=7, consistent with the flows). Exact
-    counts are run-config-dependent; treat ~23/25 as the headline. The ~8% undercount is weak
-    colour-histogram Re-ID on a dense crowd. **Staff via VLM (Llama-4 Scout on Groq): 4 staff / 19
-    customers** (vs 3/22) — 23 VLM calls, 0 failures (Groq's free tier cleared what Gemini's 20/day
-    couldn't). The VLM also relabelled the zone cam `makeup_aisle → skincare_aisle`. Proof images:
-    `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`.
-  - **Honest caveat on the split:** the **total count (~23) is reliable**, but **staff-vs-customer is
-    the weak link** — Llama-4 Scout returns mostly **low-confidence** verdicts on this steep overhead
-    CCTV (uniforms/lanyards/pink not visible from above), so the staff count is **crop-sensitive**
-    (4 staff on first-emit crops, 1 on largest-crop). The limitation is the camera angle, not the
-    model/quota. A body/face Re-ID embedding or a counter-region prior would firm this up.
+  - **Pipeline result (local detection, ADR-0037 motion stitching on; ADR-0030/0034/0035/0036):** the
+    detector reaches **22 unique people** (17 customers + 5 staff; per-camera BILLING 7 / ENTRY1 4 /
+    ENTRY2 11 / ZONE 6) with **footfall ENTRY 11 · EXIT 5 · REENTRY 2**. Exact counts are run-config-dependent.
+  - **⚠ History — user crop-adjudication (2026-06-04) showed the earlier "~23 ≈ 25" was a coincidence.**
+    Dumping one labelled crop per visitor revealed three distinct detection errors that roughly cancelled in
+    the headline number:
+    1. **Re-ID over-split (was dominant):** one moving pink-uniform staffer was split into **4** visitor_ids
+       on a single camera (front/back), another into 2 — appearance Re-ID can't match the same person across
+       views on overhead CCTV (same-person crops are *farther* apart than different-person crops; **ADR-0036**).
+    2. **Group under-detection:** 2 tightly-packed shoppers detected as **1** track — YOLO merges adjacent
+       people on overhead views. Deflates the count.
+    3. **Under-detection / pass-by:** a few real shoppers never form a solid track; the entrance lines are the
+       frame-verified door-threshold calibration (a tried ~30px inward tightening over-excluded near-door
+       customers — 23→18 — and was reverted, ADR-0037 notes).
+  - **✅ Tracking-based association (ADR-0037) fixed the dominant error.** A per-camera motion tracklet-stitch
+    (run *before* the appearance gallery) collapses fragmented ids by spatio-temporal continuity, not pixels.
+    Result: the **within-camera over-split is largely resolved** — the ZONE staffer that was **4 ids is now 1**;
+    ENTRY2 lands **exactly 8 customers** (GT ~8) and BILLING **exactly 2 staff** (GT 2); and **footfall now
+    matches GT** (11 entries / 5 exits). The remaining gap to 25 is two errors *outside* association: **group-
+    merge** (customers 17 vs 22, a detection limit) and **cross-camera staff duplication** (staff 5 vs 3 — a
+    roaming staffer seen on ENTRY2+ZONE+BILLING is minted per camera; cross-camera dedup still leans on the
+    measured-ambiguous appearance Re-ID). Per-camera identity quality is now materially cleaner; the honest
+    store-wide output is still a **head-count band + per-camera figures**.
+  - **What would firm it up further (deferred, ADR-0037 alt-c):** a floor-plane **homography** so motion
+    association works *across* cameras too (the only thing that fixes the cross-camera staff duplication);
+    appearance embeddings won't help (measured-ambiguous, ADR-0036). Proof images:
+    `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`, `data/crops/montage_*.jpg`.
 - **Anonymisation (PDF §3.2):** full-face blur on every frame, store branding masked, no audio. Faces are
   unusable → Re-ID must be appearance/trajectory-based (which ours is), and any gender/age signal in
   `sample_events.jsonl` (§5) cannot come from clear faces.

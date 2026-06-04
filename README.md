@@ -3,7 +3,7 @@
 > Turn retail **CCTV footage** into business insights — how many people walked in, where they
 > went, and what share of them **actually bought something** (conversion rate).
 >
-> Built for the UpGrad / Purplle Store Intelligence Challenge (2026).
+> Built for the Purplle Store Intelligence Challenge (2026).
 
 ---
 
@@ -13,7 +13,7 @@ ShelfSense watches a store's camera feeds and produces retail metrics:
 
 - **Footfall** — how many customers entered
 - **Conversion rate** — visitors who bought ÷ total visitors
-- **Funnel** — the drop-off from *entered → browsed → checkout → purchased*
+- **Funnel** — the drop-off from _entered → browsed → checkout → purchased_
 - **Zone engagement & dwell** — which areas attract people, and for how long
 - **Anomalies** — unusual patterns worth a look
 
@@ -35,28 +35,28 @@ docker compose up --build
 
 That starts everything. The detector **replays pre-generated events** from
 `data/events/behavior.jsonl` into the API — data appears on the dashboard within seconds, no
-YOLO model, CCTV clips, or VLM keys required.
+YOLO model, CCTV clips, or VLM keys required. This is done to make it easy for reviewers to run and test the system without heavy dependencies or datal setup. To run the full detection pipeline on real CCTV clips, see the next section.
 
-| What | URL |
-|------|-----|
-| **Live dashboard** | **http://localhost:8080** |
-| API (with interactive docs) | http://localhost:8000/docs |
+| What                        | URL                           |
+| --------------------------- | ----------------------------- |
+| **Live dashboard**          | **http://localhost:8080**     |
+| API (with interactive docs) | http://localhost:8000/docs    |
 | Metrics (Prometheus format) | http://localhost:8000/metrics |
-| Prometheus | http://localhost:9090 |
-| Grafana dashboards | http://localhost:3000 |
+| Prometheus                  | http://localhost:9090         |
+| Grafana dashboards          | http://localhost:3000         |
 
 ### API Endpoints (as required by the spec)
 
 All endpoints conform to the challenge specification and are testable via the Swagger UI (`/docs`).
 
-| Endpoint | Purpose |
-|---|---|
-| `POST http://localhost:8000/events/ingest` | Idempotent event ingestion (batch up to 500) |
-| `GET http://localhost:8000/health` | System status and feed freshness (STALE_FEED check) |
-| `GET http://localhost:8000/stores/{id}/metrics` | Core conversion rate, dwell times, and queue depths |
-| `GET http://localhost:8000/stores/{id}/funnel` | Drop-off counts from Entry → Browsed → Queue → Bought |
-| `GET http://localhost:8000/stores/{id}/heatmap` | Zone engagement and relative dwell times |
-| `GET http://localhost:8000/stores/{id}/anomalies` | Queue spikes, conversion drops, and dead zones |
+| Endpoint                                          | Purpose                                               |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| `POST http://localhost:8000/events/ingest`        | Idempotent event ingestion (batch up to 500)          |
+| `GET http://localhost:8000/health`                | System status and feed freshness (STALE_FEED check)   |
+| `GET http://localhost:8000/stores/{id}/metrics`   | Core conversion rate, dwell times, and queue depths   |
+| `GET http://localhost:8000/stores/{id}/funnel`    | Drop-off counts from Entry → Browsed → Queue → Bought |
+| `GET http://localhost:8000/stores/{id}/heatmap`   | Zone engagement and relative dwell times              |
+| `GET http://localhost:8000/stores/{id}/anomalies` | Queue spikes, conversion drops, and dead zones        |
 
 To stop it: `docker compose down` (add `-v` to also clear the database)
 

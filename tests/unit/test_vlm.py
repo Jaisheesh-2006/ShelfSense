@@ -142,7 +142,14 @@ def test_json_file_cache_tolerates_missing_file(tmp_path):
 # --- staff decider --------------------------------------------------------------------------
 
 
-def _decider(heuristic, vlm, cache, min_confidence=0.55):
+# VLM cross-store baseline + per-store colour HIGH-CONFIDENCE override (ADR-0032). A colour score at
+# least `override_margin` (0.12) above the 0.5 threshold overrides the VLM to staff (no VLM call);
+# any lower score defers to the VLM, with the heuristic threshold as the fallback. SUB_OVERRIDE sits
+# below the override point but under threshold, so the heuristic fallback reads "customer".
+SUB_OVERRIDE = 0.45
+
+
+def _decider(heuristic, vlm, cache, min_confidence=0.55, override_margin=0.12):
     return StaffDecider(
         heuristic,
         vlm,
@@ -151,49 +158,71 @@ def _decider(heuristic, vlm, cache, min_confidence=0.55):
         staff_hint=None,
         min_confidence=min_confidence,
         classify_staff=True,
+        override_margin=override_margin,
         log=_NullLog(),
     )
 
 
 def test_decider_uses_heuristic_when_no_vlm():
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.9)  # dark -> heuristic says staff
+    heuristic.observe("CAM1", 1, 0.9)  # decisive colour match -> heuristic override -> staff
     decider = _decider(heuristic, None, None)
     assert decider.is_staff("CAM1", 1, "V1") is True
 
 
-def test_decider_vlm_overrides_heuristic_when_confident(tmp_path):
+def test_decider_high_colour_overrides_vlm_but_low_colour_defers(tmp_path):
+    # The hybrid's asymmetry: a DECISIVE colour match overrides even a confident VLM (the Store_1
+    # VIS_0003 fix), but a LOW colour score is NOT a customer-override — it defers to the VLM, which
+    # can still flag staff the colour heuristic missed (cross-store generalisation).
+    staff_h = StaffClassifier(threshold=0.5)
+    staff_h.observe("CAM1", 1, 0.9)  # decisive uniform colour present
+    vlm_cust = FakeVLM(staff=StaffVerdict(is_staff=False, confidence=0.95, reason="looks casual"))
+    d1 = _decider(staff_h, vlm_cust, JsonFileCache(tmp_path / "a.json"))
+    d1.observe_crop("CAM1", 1, _img(), _bbox())
+    assert d1.is_staff("CAM1", 1, "V1") is True  # heuristic override wins
+    assert vlm_cust.staff_calls == 0  # VLM not even consulted for a decisive score
+
+    cust_h = StaffClassifier(threshold=0.5)
+    cust_h.observe("CAM2", 2, 0.05)  # uniform colour absent -> defer to the VLM (no cust-override)
+    vlm_staff = FakeVLM(staff=StaffVerdict(is_staff=True, confidence=0.9, reason="apron+lanyard"))
+    d2 = _decider(cust_h, vlm_staff, JsonFileCache(tmp_path / "b.json"))
+    d2.observe_crop("CAM2", 2, _img(), _bbox())
+    assert d2.is_staff("CAM2", 2, "V2") is True  # VLM baseline catches staff the colour missed
+    assert vlm_staff.staff_calls == 1
+
+
+def test_decider_vlm_decides_below_override(tmp_path):
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.0)  # bright -> heuristic says NOT staff
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)  # below the override point -> VLM baseline decides
     vlm = FakeVLM(staff=StaffVerdict(is_staff=True, confidence=0.9, reason="apron"))
     decider = _decider(heuristic, vlm, JsonFileCache(tmp_path / "c.json"))
     decider.observe_crop("CAM1", 1, _img(), _bbox())
-    assert decider.is_staff("CAM1", 1, "V1") is True  # VLM wins
+    assert decider.is_staff("CAM1", 1, "V1") is True  # VLM decides
     assert vlm.staff_calls == 1
 
 
 def test_decider_low_confidence_falls_back_to_heuristic(tmp_path):
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.9)  # heuristic -> staff
-    vlm = FakeVLM(staff=StaffVerdict(is_staff=False, confidence=0.1, reason="unsure"))
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)  # below override + below threshold
+    vlm = FakeVLM(staff=StaffVerdict(is_staff=True, confidence=0.1, reason="unsure"))
     decider = _decider(heuristic, vlm, JsonFileCache(tmp_path / "c.json"))
     decider.observe_crop("CAM1", 1, _img(), _bbox())
-    assert decider.is_staff("CAM1", 1, "V1") is True  # low-confidence verdict ignored
+    assert decider.is_staff("CAM1", 1, "V1") is False  # low-confidence verdict ignored -> heuristic
 
 
 def test_decider_no_crop_uses_heuristic(tmp_path):
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.0)  # not staff
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)  # below override -> would consult the VLM if able
     vlm = FakeVLM(staff=StaffVerdict(is_staff=True, confidence=0.9, reason="x"))
     decider = _decider(heuristic, vlm, JsonFileCache(tmp_path / "c.json"))
-    # No observe_crop -> nothing to send -> heuristic, no VLM call.
+    # No observe_crop -> nothing to send -> heuristic fallback, no VLM call.
     assert decider.is_staff("CAM1", 1, "V1") is False
     assert vlm.staff_calls == 0
 
 
 def test_decider_visitor_none_forces_heuristic(tmp_path):
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.0)
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)
     vlm = FakeVLM(staff=StaffVerdict(is_staff=True, confidence=0.9, reason="x"))
     decider = _decider(heuristic, vlm, JsonFileCache(tmp_path / "c.json"))
     decider.observe_crop("CAM1", 1, _img(), _bbox())
@@ -204,7 +233,8 @@ def test_decider_visitor_none_forces_heuristic(tmp_path):
 def test_decider_uses_cached_verdict_without_recall(tmp_path):
     cache = JsonFileCache(tmp_path / "c.json")
     cache.set("staff:ST1008:none:V1", {"is_staff": True, "confidence": 0.9, "reason": "seen"})
-    heuristic = StaffClassifier(threshold=0.5)  # would say NOT staff (no observations)
+    heuristic = StaffClassifier(threshold=0.5)
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)  # below override -> consults the VLM cache
     vlm = FakeVLM(raise_on_staff=True)  # must NOT be called on a cache hit
     decider = _decider(heuristic, vlm, cache)
     assert decider.is_staff("CAM1", 1, "V1") is True
@@ -213,7 +243,7 @@ def test_decider_uses_cached_verdict_without_recall(tmp_path):
 
 def test_decider_error_falls_back_and_does_not_retry(tmp_path):
     heuristic = StaffClassifier(threshold=0.5)
-    heuristic.observe("CAM1", 1, 0.0)
+    heuristic.observe("CAM1", 1, SUB_OVERRIDE)  # below override -> consults the VLM (which errors)
     vlm = FakeVLM(raise_on_staff=True)
     decider = _decider(heuristic, vlm, JsonFileCache(tmp_path / "c.json"))
     decider.observe_crop("CAM1", 1, _img(), _bbox())

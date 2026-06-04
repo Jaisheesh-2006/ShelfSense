@@ -48,6 +48,9 @@ STORE_CONFIG = StoreConfig(
     # the global 0.55/2000 (its own 2-customer truth). Exact counts are run-config-dependent.
     reid_max_distance=0.35,
     min_zone_dwell_ms=800,
+    # Group splitting attempt (ADR-0036/0037, measured-not-kept): raising YOLO inference size to 960
+    # did NOT separate tightly-packed/occluded groups (unique count didn't rise, just slower), so we
+    # keep the global imgsz 768. Tight-group merge stays a documented overhead-CCTV detection limit.
     cameras=[
         CameraConfig(
             camera_id="ENTRY1",
@@ -55,9 +58,10 @@ STORE_CONFIG = StoreConfig(
             role=CameraRole.ENTRANCE,
             primary_zone=ZoneName.ENTRANCE,
             fps=25.0,
-            # Calibrated on a grid-overlaid frame: the white strip in front of the wood floor is
-            # OUTSIDE. The entrance line sits on the wood edge so only true interior foot-points
-            # count; the tiled/white mall area above is pass-by.
+            # Calibrated + frame-VERIFIED (data/crops/line_ENTRY1.jpg): the line sits on the door
+            # threshold so the tiled mall corridor above is OUTSIDE and only the wood store floor
+            # counts. A 30px inward tightening was tried but over-excluded real near-door customers
+            # (Store_2 23→18), so we keep the verified threshold line; residual pass-by is marginal.
             entrance_line=EntranceLine(
                 x1=140, y1=555, x2=760, y2=515, inside_sign=1, calibrated=True
             ),
@@ -68,7 +72,8 @@ STORE_CONFIG = StoreConfig(
             role=CameraRole.ENTRANCE,
             primary_zone=ZoneName.ENTRANCE,
             fps=25.0,
-            # Calibrated: white strip is outside; line sits on the wood edge (interior below).
+            # Calibrated + frame-VERIFIED (data/crops/line_ENTRY2.jpg): line on the door threshold,
+            # mall corridor above is OUTSIDE. (30px tightening reverted — see ENTRY1.)
             entrance_line=EntranceLine(
                 x1=150, y1=580, x2=740, y2=520, inside_sign=1, calibrated=True
             ),

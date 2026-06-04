@@ -195,7 +195,39 @@ Increase the tracking algorithm's **buffer space** (the number of frames a lost 
 Deploying a heavier model violates our strict CPU-only performance constraints, and writing custom spatial merging logic is brittle across different store layouts. ByteTrack natively supports a track buffer. By increasing this buffer size, we keep the track "alive" in memory while the customer is occluded. When they emerge on the other side of the shelf, the tracker re-associates them with their original ID using their Re-ID appearance signature. This elegantly solves occlusion fragmentation without adding any computational overhead.
 
 ### Trade-offs Accepted
-A very large buffer increases memory usage and can cause "ghost tracks" to teleport if the Re-ID signature falsely matches a different person emerging far away. We accepted this risk by tuning the buffer to cover only short (1-3 second) occlusions typical of retail aisles.
+A very large buffer increases memory usage and can cause "ghost tracks" to teleport if the Re-ID signature falsely matches a different person emerging far away. We accepted this risk by tuning the buffer to cover only short (1-3 second) occlusions typical of retail aisles. *Note:* the buffer's re-association leans on appearance, which we later measured to be unreliable on overhead views (see Decision 8) — so the buffer handles short same-view gaps, while a dedicated motion associator handles the longer turn-around/occlusion case.
 
 ### When I Would Revisit This Decision
 If the store introduces massive obstructions (e.g., full floor-to-ceiling promotional displays) that exceed our tuned buffer duration, we would need to implement explicit cross-zone merging logic using a global state tracker.
+
+---
+
+## Decision 8: Tracking-Based Association vs. Appearance Re-ID (the over-split fix)
+
+### Problem
+On overhead store cameras, the single biggest counting error was the *opposite* of double-counting: one shopper was split into several visitor IDs. When a person turns around or is briefly occluded, ByteTrack ends one track and starts a new one; the system is then supposed to recognize it as the same person. The question was *how*: by appearance, or by motion.
+
+### Options Considered
+* Appearance Re-ID only (color histogram, or a learned CNN embedding) to re-link the new track.
+* Motion / spatio-temporal association — link a dying track to a new one born nearby a moment later, by trajectory, independent of appearance.
+* Simply raise the tracking buffer further (Decision 7).
+
+### What AI Suggested
+The AI's first instinct was to strengthen appearance Re-ID — add a learned embedding (e.g., OSNet) so the front and back of a person land closer in feature space.
+
+### Final Decision
+A **pluggable, motion-based track associator** (tracklet stitching) that runs *before* the appearance Re-ID gallery and is the default. Appearance Re-ID is retained as the cross-camera fallback (selectable via `TRACK_ASSOCIATION`).
+
+### Why
+I tested the appearance hypothesis directly: I built the learned embedder and measured same-person vs. different-person distance on adjudicated crops. The result was decisive — on these overhead views the same person's front and back are *farther* apart than two different people (color histogram **0.66** same vs **0.61** different; ImageNet CNNs overlap too). No appearance method can separate identities here, so a heavier model would not have helped. Motion, however, is unambiguous: a person cannot teleport, so a track that disappears at a point and a new one that appears nearby moments later is the same person. Stitching by spatio-temporal continuity fixed the dominant error — a roaming staff member that had been split into **4 IDs on one camera collapsed to 1**, and Store 2's entry/exit footfall came into line with ground truth.
+
+### Explicit Evaluation
+* **What worked:** within-camera over-split largely eliminated; footfall counts matched the hand-labeled ground truth; the associator is pure logic (positions + time), so it is fully unit-tested and never touches the acceptance gate.
+* **What did not work:** it is per-camera. A staff member roaming across non-overlapping cameras is still counted once per camera, because positions are not comparable across views.
+* **When it should be used:** always, as the default; appearance Re-ID remains the fallback for cross-camera de-duplication.
+
+### Trade-offs Accepted
+Motion association cannot span non-overlapping cameras without a shared coordinate space, and it does not fix group-merge (2–4 people detected as one box, a detection-level limit). I accepted both as documented limitations rather than over-fitting.
+
+### When I Would Revisit This Decision
+To also fix cross-camera identity, I would add a floor-plane homography so each camera's coordinates map to a common store map, letting the same motion association work across overlapping views — a far better investment than a heavier appearance model that the data shows would not generalize.

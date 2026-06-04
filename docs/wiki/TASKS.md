@@ -111,9 +111,14 @@
 
 ## Phase 3 — Production hardening, AI docs, dashboard
 - ✅ Structured logging fields (trace_id, store_id, endpoint, latency_ms, event_count, status_code);
-  idempotency tests; graceful degradation (DB down → 503, no stack traces).
-- ✅ Pytest **>70% coverage** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel);
-  **prompt blocks** atop test files (`# PROMPT:` / `# CHANGES MADE:`).
+  idempotency tests; graceful degradation (DB down → 503, no stack traces). **Hardened 2026-06-03:**
+  `store_id`+`event_count` now bound in the access log (middleware + ingest sets `request.state`),
+  and a typed `OperationalError`/`InterfaceError` handler maps DB-down to a structured **503** on the
+  data endpoints (was a generic 500) — both covered by `tests/integration/test_production.py`.
+- ✅ Pytest coverage **gated at 70%** (`pyproject.toml [tool.coverage]` + `requirements-dev.txt`); now
+  **84.6%** incl. edge cases (empty store, all-staff, zero purchases, re-entry in funnel) and a true
+  **pipeline-replay E2E** (`test_pipeline_replay.py`) ingesting the committed events for both stores;
+  **prompt blocks** atop test files.
 - 🔄 **Part D (now LIVE, maintained each slice):** `DESIGN.md` + `CHOICES.md` at repo root (>250 words
   each) created; `# PROMPT`/`# CHANGES MADE` blocks added to all test files. Keep in sync as design moves.
 - ✅ **Part E (bonus) — live React dashboard (ADR-0020).** `frontend/` Vite + React + TS SPA polling all
@@ -172,8 +177,15 @@
   `_PROVIDERS` registry; swap via `VLM_PROVIDER`. Groq cleared Store_2's volume.
 - ✅ **D9 — Two run modes (ADR-0033):** default `up` = `replayer` (committed events, gate-safe); full
   pipeline opt-in via `--profile detect`.
+- ✅ **D10 — Replay artifact committed + Part-C gaps closed (2026-06-03):** `.gitignore` negations now
+  track `data/events/behavior.jsonl` (+ VLM cache) so the gate works on a fresh clone — previously the
+  whole `data/` tree was ignored and the replayer would have had nothing to ingest. Plus the logging /
+  503 / coverage-gate hardening above. Removed two obsolete diagnostic scripts (superseded; broke on
+  the registry + staff rewrite). Default VLM provider/model switched to **Groq / Llama-4 Scout**
+  everywhere (config, compose, `.env.example`); Gemini documented as an alternative.
 - ⬜ **Re-validate + clean-machine gate dry-run** on the CURRENT defaults (imgsz 768 / fps 10): run
   `--profile detect` on both stores → re-confirm Store_1's 2-customer baseline, regenerate committed
-  `events.jsonl` + VLM cache, then `docker compose down -v && up --build`.
+  `events.jsonl` + VLM cache, then `docker compose down -v && up --build`. *(Only remaining open item;
+  needs the CCTV clips + Docker — a run task, not code.)*
 
 > Each task follows CLAUDE.md's approach: understand → fit → tradeoffs → plan → implement → validate.

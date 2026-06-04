@@ -38,6 +38,27 @@
    ✅ *Slice 2.4:* appearance Re-ID merges the same shopper across cameras into one `visitor_id`
    (approximate — ADR-0008/A5). ✅ *Slice 2.4b:* the **entrance camera no longer counts visitors** (footfall
    only, ADR-0011), removing CAM3↔CAM1/2 overlap double-counting and mall pass-by at source.
+   ⚠ **Measured limit (ADR-0036):** on **overhead** CCTV the *opposite* error dominates on a busy store —
+   **over-splitting**: the same person seen front vs back fails to match (same-person crops are *farther*
+   apart than different-person crops; appearance Re-ID — histogram, MobileNet, ResNet50 — all fail to
+   separate identities), so one moving staffer splits into several ids.
+   ✅ **Fixed *within* a camera (ADR-0037):** a per-camera **motion tracklet-stitch** runs before the
+   appearance gallery and collapses fragmented ids by spatio-temporal continuity (last position + velocity,
+   not pixels). Store_2's ZONE staffer went from **4 ids → 1**; footfall now matches GT. **Cross-camera**
+   dedup still leans on appearance (positions aren't comparable across cameras), so a roaming staffer seen on
+   several cameras is still over-counted — a floor-plane homography would extend motion association across
+   cameras (deferred, ADR-0037 alt-c). Honest crowd output = head-count band + per-camera figures
+   ([[GROUND_TRUTH]] §1).
+
+9. **Tightly-packed groups** (2+ people standing together) → should count as individuals.
+   ⚠ *Partial — a detection limit, not a logic/association one:* per-tracked-person counting handles a
+   *resolvable* group, but on overhead views YOLO sometimes merges adjacent people into **one box → one
+   track → one visitor** (under-counts; e.g. Store_2 customers read 17 vs GT 22). A higher NMS IoU keeps
+   nearby boxes, and motion stitching (ADR-0037) does **not** worsen it (it links fragments, never merges
+   coexisting tracks). A tried inference-size bump (`detector_imgsz=960` on ST1009) did **not** separate
+   tight groups (count didn't rise, just slower) and was **reverted** — the merge happens at the box level,
+   before tracking. Genuinely separating a 2–4-person cluster needs pose/part-based or crowd-density
+   detection, beyond a box detector — documented, deferred.
 
 8. **Mirror / reflective-surface phantoms** (CAM5 mirror, backlit displays, wall posters) → a reflection
    is not a person. ✅ *Slice 2.4b (ADR-0010):* a calibrated **walkable-floor mask** drops detections whose

@@ -37,8 +37,10 @@ from shelfsense_common.sinks import EventSink, FanOutSink, HttpEventSink, JsonlE
 from shelfsense_common.stores import all_stores
 from shelfsense_common.worker import GracefulRunner
 
+from app.association import build_associator
 from app.billing import BillingTracker
 from app.crossing import CrossingDetector
+from app.embedding import build_embedder
 from app.frames import VideoFrameSource
 from app.gating import passes_size_gate
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
@@ -65,6 +67,8 @@ def process_camera(
     settings: Settings,
     log,
     emitted_visitors: set[str],
+    exited_visitors: set[str],
+    embedder,
     zone_override: str | None = None,
 ) -> dict[str, int]:
     """Track one camera; emit zone + entrance + reentry events with global (Re-ID'd) visitor ids."""
@@ -104,14 +108,21 @@ def process_camera(
         "too_small": 0,
         "billing": 0,
     }
-    # Running appearance signature per track (sum of per-frame histograms) until resolved.
+    # Running appearance signature per track (sum of per-frame embeddings) until resolved. Backend:
+    # the learned CNN embedding (view-invariant) when an embedder is configured, else the colour
+    # histogram. Both return unit vectors with the same (image, x, y, w, h) signature.
+    sig_dim = embedder.dim if embedder is not None else SIGNATURE_LEN
     sig_sums: dict[int, np.ndarray] = {}
 
     def accumulate_signature(track_id: int, image: np.ndarray, bbox) -> None:
         if registry.is_resolved(camera.camera_id, track_id):
             return  # already has a global id — no need to keep sampling appearance
         x, y, w, h = int(bbox.x), int(bbox.y), int(bbox.w), int(bbox.h)
-        sig = appearance_signature(image, x, y, w, h)
+        sig = (
+            embedder.extract(image, x, y, w, h)
+            if embedder is not None
+            else appearance_signature(image, x, y, w, h)
+        )
         prev = sig_sums.get(track_id)
         sig_sums[track_id] = sig if prev is None else prev + sig
         # 2. Heuristic fallback: measure match to the store's staff uniform colour
@@ -125,7 +136,7 @@ def process_camera(
     def current_signature(track_id: int) -> np.ndarray:
         vec = sig_sums.get(track_id)
         if vec is None:
-            return np.zeros(SIGNATURE_LEN, dtype=np.float32)
+            return np.zeros(sig_dim, dtype=np.float32)
         norm = float(np.linalg.norm(vec))
         return vec / norm if norm > 0 else vec
 
@@ -175,13 +186,21 @@ def process_camera(
     ) -> None:
         res = registry.resolve(camera.camera_id, track_id, current_signature(track_id), ts_ms)
         is_staff = staff.is_staff(camera.camera_id, track_id, res.visitor_id, dwell_ms)
-        if res.is_reentry:  # known visitor returning after an absence — flag before the main event
+        # REENTRY only for a visitor who actually LEFT the store (a prior EXIT across the entrance
+        # line) and is now seen again — per EVENT_SCHEMA: "same visitor_id seen after a prior EXIT".
+        # A gap-based Re-ID re-match on its own is just track fragmentation (a briefly occluded
+        # shopper re-identified), so on clips where nobody exits this correctly stays 0 instead of
+        # firing once per occlusion gap.
+        if res.is_reentry and res.visitor_id in exited_visitors:
             write_event(
                 res.visitor_id, BehaviorEventType.REENTRY, ts_ms, confidence, None, 0, is_staff
             )
+            exited_visitors.discard(res.visitor_id)  # one re-entry per prior exit
         write_event(
             res.visitor_id, event_type, ts_ms, confidence, zone_id, dwell_ms, is_staff, queue_depth
         )
+        if event_type is BehaviorEventType.EXIT:
+            exited_visitors.add(res.visitor_id)  # arm a future REENTRY for this visitor
 
     def emit_zone(ze: ZoneEvent) -> None:
         emit(
@@ -221,6 +240,11 @@ def process_camera(
             fps=src.source_fps,
         )
         frame_h, frame_w = (src.height, src.width)
+        # Tracklet stitching (ADR-0037): collapse fragmented ByteTrack ids into ONE stable LOCAL id
+        # by motion BEFORE the appearance gallery, so a shopper split front/back stays one visitor.
+        # Built per camera (positions are camera-local + frame-scaled); IdentityAssociator = legacy.
+        associator = build_associator(settings, frame_w, frame_h)
+        log.info("associator_open", camera=camera.camera_id, kind=type(associator).__name__)
         for frame in src.frames():
             last_ts = frame.ts_ms
             for track in tracker.update(frame.image):
@@ -237,20 +261,24 @@ def process_camera(
                 if camera.floor_region is not None and not camera.floor_region.contains(fx, fy):
                     counts["off_floor"] += 1
                     continue
-                accumulate_signature(track.track_id, frame.image, track.bbox)
+                # Stitch this raw track to a stable local id (after the gates, so reflections /
+                # pass-by blobs never seed a local). Everything downstream — signature, staff,
+                # zone dwell, crossings — keys on local_id, so a fragmented person is ONE track.
+                local_id = associator.assign(track.track_id, fx, fy, frame.ts_ms)
+                accumulate_signature(local_id, frame.image, track.bbox)
                 # Capture a representative crop for the VLM staff call (no-op without a VLM). Done
                 # outside accumulate_signature so a quickly-resolved track still gets a crop.
-                staff.observe_crop(camera.camera_id, track.track_id, frame.image, track.bbox)
+                staff.observe_crop(camera.camera_id, local_id, frame.image, track.bbox)
                 # Pass-by filter (ADR-0029): on a camera with an entrance line, only store-INTERIOR
                 # detections count as visitors — mall corridor traffic stays out of the zone count.
                 # The crossing detector below still sees both sides, so it can detect entries.
                 inside_ok = camera.entrance_line is None or camera.entrance_line.is_inside(fx, fy)
                 if inside_ok:
-                    for ze in zone_tracker.observe(track.track_id, frame.ts_ms, track.confidence):
+                    for ze in zone_tracker.observe(local_id, frame.ts_ms, track.confidence):
                         emit_zone(ze)
                 if crossing is not None:
                     for cross in crossing.update(
-                        track.track_id, fx, fy, frame.ts_ms, track.confidence
+                        local_id, fx, fy, frame.ts_ms, track.confidence
                     ):
                         emit(
                             cross.track_id,
@@ -291,6 +319,7 @@ def process_store(
     sink: EventSink,
     vlm,
     vlm_cache,
+    embedder,
     settings: Settings,
     log,
     emitted_visitors: set[str],
@@ -309,11 +338,16 @@ def process_store(
     if not cameras:
         return {}
 
-    # Per-store density tuning falls back to the global default when the store doesn't override it.
-    reid_max_distance = (
-        store.reid_max_distance if store.reid_max_distance is not None
-        else settings.reid_max_distance
-    )
+    # Re-ID distance. The CNN embedding lives in a different metric space from the colour histogram,
+    # so it uses the global `reid_cnn_max_distance`; the histogram backend keeps the per-store
+    # density tuning (store override → global default).
+    if embedder is not None:
+        reid_max_distance = settings.reid_cnn_max_distance
+    else:
+        reid_max_distance = (
+            store.reid_max_distance if store.reid_max_distance is not None
+            else settings.reid_max_distance
+        )
     tracker.imgsz = (
         store.detector_imgsz
         if store.detector_imgsz is not None
@@ -339,13 +373,18 @@ def process_store(
         staff_hint=store.staff_uniform_hint,
         min_confidence=settings.vlm_staff_min_confidence,
         classify_staff=settings.vlm_classify_staff,
+        override_margin=settings.staff_override_margin,
         log=log,
+        crop_dump_dir=settings.staff_crop_dump_dir,
     )
     # Label product-camera zones from the shelves (VLM), falling back to the static primary_zone.
     zone_overrides = resolve_zones(
         cameras, store_dir, vlm, vlm_cache, settings, store.store_id, log
     )
     clip_start = _clip_start_for(store, settings)
+    # Visitors who crossed the entrance line outbound (EXIT); seeing them again arms a REENTRY.
+    # Per-store + shared across this store's cameras (the gallery/identity space is per-store).
+    exited_visitors: set[str] = set()
     log.info(
         "store_open",
         store=store.store_id,
@@ -374,6 +413,8 @@ def process_store(
             settings,
             log,
             emitted_visitors,
+            exited_visitors,
+            embedder,
             zone_override=zone_overrides.get(camera.camera_id),
         )
         for key, value in counts.items():
@@ -388,6 +429,7 @@ def process_store(
                 camera=camera.camera_id,
                 posted_to_api=http_sink.posted,
             )
+    staff.dump_crops()  # no-op unless STAFF_CROP_DUMP_DIR is set (proof/adjudication aid)
     return totals
 
 
@@ -431,6 +473,10 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     vlm = build_vlm_client(settings, log)
     vlm_cache = JsonFileCache(settings.vlm_cache_path) if vlm is not None else None
 
+    # Optional learned Re-ID embedder (ADR-0036). None unless reid_backend="cnn"; falls back to the
+    # colour histogram. Built once and shared (stateless feature extraction) across all stores.
+    embedder = build_embedder(settings, log)
+
     totals: dict[str, int] = {}
     emitted_visitors: set[str] = set()  # distinct (store, visitor) ids that produced an event
 
@@ -458,6 +504,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
                 sink,
                 vlm,
                 vlm_cache,
+                embedder,
                 settings,
                 log,
                 emitted_visitors,

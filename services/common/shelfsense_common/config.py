@@ -96,7 +96,26 @@ class Settings(BaseSettings):
     # ground-truth of 7 people on CAM1/2/3 (scripts/calibrate_reid.py): with the tuned tracker,
     # 0.55 collapses 44 fragmented tracks to ~7 unique. Clip-tuned + approximate (see DESIGN A5).
     reid_max_distance: float = 0.55
+    # Re-ID backbone (ADR-0036): "histogram" = the colour-histogram appearance signature (default,
+    # gate-safe, no model); "cnn" = a learned, view-invariant CNN embedding (torchvision backbone)
+    # that stops the same person being split front/back/across cameras. CNN embeddings live in a
+    # different metric space, so they use `reid_cnn_max_distance` (NOT reid_max_distance).
+    reid_backend: str = "histogram"
+    reid_cnn_model: str = "mobilenet_v3_large"  # torchvision backbone; resnet50 = stronger/slower
+    reid_cnn_max_distance: float = 0.30  # cosine-distance threshold for the CNN embedding
     reid_reentry_min_gap_ms: int = 5000  # absence before a re-matched visitor counts as REENTRY
+    # --- Track association (tracklet stitching, ADR-0037) ---
+    # How fragmented per-camera ByteTrack ids are re-linked into ONE local track BEFORE the
+    # appearance gallery. "motion" (default) stitches by spatio-temporal continuity — a track that
+    # dies and a new one born near it shortly after is the same person — the reliable fix for the
+    # overhead-CCTV over-split that appearance Re-ID provably cannot solve (ADR-0036). "appearance"
+    # disables stitching and relies on the colour/CNN gallery alone (the legacy fallback). The
+    # gallery still runs in BOTH modes for cross-camera dedup; appearance Re-ID is kept, not gone.
+    track_association: str = "motion"  # "motion" (stitch) | "appearance" (legacy gallery-only)
+    stitch_max_gap_ms: int = 2000  # longest lost-track absence still eligible to stitch
+    stitch_min_gap_ms: int = 150  # shortest absence; lifted above 1 sampled-frame interval so a
+    # still-live track (sub-frame gap) can never be mistaken for lost and stolen by another person.
+    stitch_max_jump_frac: float = 0.12  # max predicted-position jump as a fraction of max(W, H)
     # Staff classification (Slice 2.4b, ADR-0009/0032/0027): the PRIMARY signal is the optional VLM
     # (staff/customer per person, see below); the always-available FALLBACK is a per-store
     # uniform-COLOUR match (StoreConfig.staff_heuristic_color — black=Store_1, pink=Store_2).
@@ -139,6 +158,17 @@ class Settings(BaseSettings):
     vlm_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     vlm_classify_staff: bool = True  # use the VLM for staff/customer (else heuristic only)
     vlm_classify_zone: bool = True  # use the VLM to label camera zones (else static primary_zone)
+    # Staff decision = VLM cross-store BASELINE + per-store colour heuristic high-conf OVERRIDE
+    # (ADR-0032). The VLM generalises across stores; where a store has a distinctive uniform, a
+    # decisive colour match overrides the VLM. This is how far ABOVE the staff threshold the colour
+    # score must sit to trigger that override (staff regardless of the VLM). Below it, the VLM
+    # decides (heuristic threshold is the fallback when the VLM can't). Absence of the colour never
+    # overrides to "customer" (could be occlusion/back-office) — it defers to the VLM.
+    staff_override_margin: float = 0.12
+    # Debug/proof only: if set, the detector writes one labelled crop per visitor here (named by
+    # visitor / classification / colour score) so the people behind the numbers can be eyeballed.
+    # Off by default; never needed for the gate. Set via STAFF_CROP_DUMP_DIR.
+    staff_crop_dump_dir: str = ""
     # Confidence floors: below these the VLM verdict is ignored and we keep the heuristic / static
     # zone. Keeps a hesitant model from overriding a known-good default.
     vlm_staff_min_confidence: float = 0.55

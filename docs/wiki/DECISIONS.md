@@ -968,3 +968,140 @@ Concretely: **every camera now runs a zone tracker** (the entrance cam too), so 
   on the reviewer's machine; (b) drop live detection entirely — loses the "it really runs" story.
 - **Trade-offs / notes:** the committed `events.jsonl` (+ VLM cache) must be regenerated when detection
   logic changes, or replay shows stale numbers. Idempotent ingest makes replay safe to re-run.
+
+## ADR-0034 — Staff = VLM cross-store baseline + heuristic high-confidence override (hybrid)
+- **Date:** 2026-06-03 · **Status:** Accepted (refines ADR-0009/0032; user-directed) · validated by the
+  local detection re-run on both stores.
+- **Context:** Earlier the VLM **overrode** the heuristic whenever it was confident (ADR-0027). On a
+  Store_1 local run that demoted a genuine **black-uniform staff member** (VIS_0003) to *customer* on a
+  confident-but-wrong VLM verdict → 4 staff / 3 customers instead of the ground-truth **5 / 2**. The
+  calibrated per-store colour heuristic is the *more* reliable signal where a distinctive uniform
+  exists; the VLM is the *more* reliable signal where it doesn't (cross-store generalisation).
+- **Decision:** fuse them **asymmetrically** (`staff_decider.py`):
+  - The **VLM is the cross-store baseline** — it decides by default, so a brand-new store works with no
+    per-store tuning.
+  - The **per-store colour heuristic is a high-confidence OVERRIDE**: when the mean colour score is at
+    least `staff_override_margin` (0.12) above `staff_uniform_threshold` — a *decisive* uniform match —
+    the person is staff **regardless of the VLM** (a wrong VLM can't demote known uniformed staff).
+  - **Asymmetric on purpose:** a *low* colour score is **not** a customer-override (the uniform may be
+    occluded, or the person is in a back room) — it defers to the VLM, with the heuristic threshold as
+    the fallback only when the VLM can't decide (off / no crop / low confidence / error).
+  - Every decision emits a `staff_decision` log (`colour_score`, `threshold`, `is_staff`, `source` ∈
+    {`heuristic_override`, `vlm_*`, `heuristic_fallback`}) for explainability/calibration.
+- **Future (noted, user idea):** replace the hard override with a **weighted-score fusion** — combine the
+  VLM staff-probability, the heuristic colour score, and other signals (e.g. dwell, behind-counter pose)
+  into one staff score with tuned weights. More principled than a binary override; deferred until there's
+  labelled data to fit the weights against.
+- **Alternatives:** (a) VLM-primary (prior) — confident-but-wrong calls demote real staff; (b)
+  heuristic-primary with VLM as a symmetric borderline tie-breaker — rejected: a low colour score would
+  wrongly veto a staff member the VLM correctly spots (loses cross-store generalisation); (c) pure
+  OR-combine — lets a customer in dark clothing be force-flagged staff by the colour cue.
+- **Trade-offs / notes:** `staff_override_margin` is the one knob — too low re-introduces colour false
+  positives, too high lets the VLM demote real staff. The split stays approximate on overhead CCTV.
+
+## ADR-0035 — REENTRY requires a prior EXIT (not a Re-ID gap re-match)
+- **Date:** 2026-06-03 · **Status:** Accepted
+- **Context:** [[EVENT_SCHEMA]] defines `REENTRY` as "same `visitor_id` seen **after a prior EXIT**", but
+  the detector emitted it on **any** gallery re-match after a >5 s gap — i.e. on ordinary **track
+  fragmentation** (a briefly occluded shopper re-identified). A Store_1 local run, where **nobody exits**
+  (entrance clips show ~no crossing), produced **27 false REENTRYs**; Store_2 produced 19.
+- **Decision:** gate REENTRY on an actual exit. `process_store` keeps a per-store `exited_visitors` set;
+  a visitor is added when it emits an **EXIT** (entrance line, outbound). A gap-based re-match only emits
+  `REENTRY` if that visitor is in the set (then it's cleared — one re-entry per exit). The gallery's
+  low-level `is_reentry` flag is unchanged; only its *promotion to an event* now requires a prior EXIT.
+- **Alternatives:** (a) raise `reid_reentry_min_gap_ms` — a hack that doesn't generalise and still mislabels
+  long occlusions; (b) drop REENTRY entirely — loses a real behaviour the schema asks for.
+- **Trade-offs / notes:** cameras are processed sequentially, so a cross-camera exit→re-appear ordering can
+  still be imperfect; acceptable since real re-entries are rare on these clips and the false-positive
+  elimination is the win. Re-ID still de-dups fragmented tracks into one visitor (unique count unaffected).
+
+## ADR-0036 — Re-ID over-split: learned embedding investigated, parked (appearance is ambiguous on overhead CCTV)
+- **Date:** 2026-06-04 · **Status:** Accepted (keep colour histogram; learned embedder built but off by
+  default) · evidence-backed, user-directed.
+- **Context:** User adjudication of dumped per-visitor crops ([[GROUND_TRUTH]]) showed the dominant Store_2
+  error is **Re-ID over-splitting**: one moving (pink-uniform) staff member was split into **4** visitor_ids
+  (front / back / across cameras), another into 2. The colour-histogram appearance signature is
+  view-DEPENDENT, so the same person seen from different angles doesn't match and the gallery mints new ids.
+- **Investigation:** built a **gate-safe, pluggable learned embedder** (`detector/app/embedding.py`,
+  `reid_backend="cnn"`) — a torchvision CNN backbone producing an L2-normalised embedding behind the same
+  `extract(image,x,y,w,h)` interface as the histogram, returning `None` (→ histogram) when torch/torchvision
+  is absent. Then **measured** same-person vs different-person cosine distance on the adjudicated crops:
+
+  | method | same-person mean | different-person mean | separable? |
+  |---|---|---|---|
+  | colour histogram | **0.66** | 0.61 | no — same is *farther* than different |
+  | MobileNetV3 (ImageNet) | 0.41 | 0.44 | no — overlap |
+  | ResNet50 (ImageNet) | 0.47 | 0.48 | no — overlap |
+
+- **Finding:** on **overhead** CCTV the same person's front vs back is genuinely *more* different than two
+  different people, so **no appearance-only method separates identities** here. ImageNet CNNs encode generic
+  appearance, not identity; true person-Re-ID nets (OSNet) are trained on *side-view* pedestrians, so the
+  overhead front/back gap is out-of-domain for them too — and the histogram result shows the appearance
+  signal itself is inverted, which a learned embedding cannot recover.
+- **Decision:** **keep the colour histogram** as the default Re-ID backend; leave the learned embedder in as
+  **off-by-default, pluggable infrastructure** (a real Re-ID checkpoint can drop into `reid_cnn_model` later).
+  Document the over-split as a fundamental limitation rather than chase a fix that the data says won't pay off.
+- **Alternatives:** (a) ship an ImageNet-CNN embedding anyway — rejected: measured non-discriminative, would
+  merge different people; (b) source genuine OSNet weights — install-hard on Windows + overhead domain gap;
+  (c) **tracking-based association** (link split tracks by motion / trajectory / time gaps / camera geometry
+  instead of appearance) — the only thing that *could* merge front/back, but a large effort with uncertain
+  payoff on overhead views; **deferred** (parked next step).
+- **Trade-offs / notes:** the unique-visitor count therefore stays approximate on the busy store — the
+  over-split inflates ids while group-merging + under-detection deflate them, partly cancelling. The honest
+  output is the **head-count band + per-camera figures**, not an exact crowd identity count ([[GROUND_TRUTH]]
+  §1, [[EDGE_CASES]]).
+
+---
+
+## ADR-0037 — Tracking-based association (tracklet stitching) — the over-split fix ADR-0036 deferred
+- **Date:** 2026-06-04 · **Status:** Accepted (default `TRACK_ASSOCIATION="motion"`; appearance kept as a
+  selectable fallback) · evidence-backed, user-directed.
+- **Context:** ADR-0036 proved appearance Re-ID (histogram **and** ImageNet CNNs) cannot separate identities
+  on overhead CCTV and named **tracking-based association** as the only thing that could merge a person split
+  front/back — but parked it. The user directed: *"the real fix is tracking-based association, make it
+  pluggable and implement it, keep appearance Re-ID as the fallback."* The cause is concrete in the code: the
+  `ReIDGallery` re-linked a fragmented ByteTrack track **only by appearance signature**, so when one shopper
+  fragments into several `track_id`s the (non-discriminative) appearance match silently fails and the gallery
+  mints new ids — Store_2's ZONE camera split one roaming staffer into **4** ids.
+- **Decision:** add a per-camera **tracklet-stitching** layer (`detector/app/association.py`) that runs
+  **before** the appearance gallery. The reliable cue is **motion**, not pixels: a track that dies at
+  position *P*/time *T* and a NEW track born near *P* soon after is the same person. `MotionTrackAssociator`
+  stitches fragmented ids into one stable **local id** via a constant-velocity spatio-temporal gate
+  (last-seen position + velocity prediction, a `(min_gap, max_gap]` absence window, a frame-scaled jump
+  radius). Everything downstream — signature accrual, staff colour, zone dwell, line crossings — keys on the
+  local id, so a fragmented person is **one** track. The `min_gap` lower bound (lifted above one sampled-frame
+  interval) is the safety guard: a still-live track has a sub-frame gap and is excluded, so two people
+  coexisting on screen can never be merged.
+- **Pluggable + gate-safe (like the VLM / embedder):** `build_associator` returns `IdentityAssociator`
+  (raw id = local id → exact legacy behaviour) for `TRACK_ASSOCIATION="appearance"`, else the motion
+  associator. Pure (positions + time only — no OpenCV/torch), fully unit-tested (100% line cov), so it can
+  never couple the acceptance gate to a model. The **appearance gallery still runs in both modes** for
+  CROSS-camera dedup — appearance Re-ID is *kept as the fallback*, not removed.
+- **Measured effect (local re-run, both stores, motion on vs the prior baseline):**
+
+  | | prior (appearance only) | motion-stitched | GT |
+  |---|---|---|---|
+  | Store_1 unique | 7 | **7 ✓** | 7 |
+  | Store_2 unique | ~23 (heavy over-split) | **22** | 25 |
+  | Store_2 **ZONE staffer ids** | **4** (front/back split) | **1 ✓** | 1 |
+  | Store_2 ENTRY2 customers | — | **8 ✓** | ~8 |
+  | Store_2 BILLING staff | — | **2 ✓** | 2 |
+  | Store_2 footfall (entries / exits) | — | **11 / 5 ✓** | ~11 / ~5 |
+
+  The **within-camera over-split — the exact error the user flagged — is largely resolved** (ZONE 4→1), and
+  Store_2 **footfall now matches GT**, which is the business-critical funnel input.
+- **Honest residual (now cleanly attributable, both *outside* tracklet stitching):** (1) **customers
+  under-counted (17 vs 22)** — groups of 2–4 collapse into fewer YOLO boxes (group-merge, a *detection*
+  limit, [[EDGE_CASES]] #9); (2) **staff over-counted (5 vs 3)** — a roaming staffer seen on ENTRY2+ZONE+
+  BILLING is minted per camera because **cross-camera** dedup still leans on appearance (the ADR-0036 limit).
+  Stitching is per-camera by design (positions aren't comparable across cameras).
+- **Alternatives:** (a) tune ByteTrack's `track_buffer` higher — helps short gaps only, can't bridge a
+  turn-around where appearance flips and the box is briefly lost; cruder, not pluggable. (b) Appearance
+  embedding (ADR-0036) — measured non-discriminative. (c) Homography to a common floor plane for
+  cross-camera motion association — would also fix the cross-camera staff duplication, but needs per-camera
+  calibration; **deferred** as the natural next step. (d) Fuse appearance into the motion gate as a
+  tiebreaker — rejected: appearance is *inverted* here (ADR-0036), so it would block correct merges.
+- **Trade-offs / notes:** motion stitching is the right tool for the *dominant* (within-camera) error and is
+  cheap, deterministic, and testable; it does not address group-merge (detection) or cross-camera identity
+  (needs geometry). The honest crowd output remains a **head-count band + per-camera figures**, but the
+  per-camera identity quality is now materially cleaner ([[GROUND_TRUTH]] §1, [[EDGE_CASES]] #7/#9).

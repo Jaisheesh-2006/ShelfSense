@@ -8,7 +8,7 @@
 
 **End-to-End Architecture Diagram:**
 ```text
-CCTV Clips → [Detection Pipeline (YOLO + Re-ID + VLM Staff Logic)]
+CCTV Clips → [Detection Pipeline (YOLO + ByteTrack + Motion Stitch + Re-ID + VLM Staff Logic)]
                   ↓
              (behavioral events: JSONL / HTTP POST)
                   ↓
@@ -38,13 +38,15 @@ The pipeline owns all computer vision, sessionization, and spatial reasoning. Th
 
 *   **Detection:** YOLOv8n handles base detection on CPU to meet strict resource constraints without requiring hardware accelerators.
 *   **Tracking:** ByteTrack associates frame-by-frame detections into stable, occlusion-resistant trajectories.
-*   **Re-ID:** A lightweight HSV color-histogram signature, matched via cosine distance, de-duplicates customers across overlapping cameras.
+*   **Track Association (Tracklet Stitching):** A pluggable, motion-based associator stitches fragmented tracks — caused by a person turning around or a brief occlusion that ends a ByteTrack id and starts a new one — back into a single identity using spatio-temporal continuity (last position + velocity prediction within a short time gap), *before* appearance Re-ID. This addresses the dominant error on overhead cameras, where the same person seen front-vs-back is measurably *less* similar in appearance than two different people, so appearance alone over-splits one shopper into several ids.
+*   **Re-ID:** A lightweight HSV color-histogram signature, matched via cosine distance, de-duplicates customers across overlapping cameras (the fallback when spatial continuity does not apply, i.e. across non-overlapping camera views).
 *   **Staff Identification:** A Vision-Language Model (Groq/Llama) classifies staff versus customers based on uniform appearance. A color-based heuristic serves as the offline fallback.
 *   **Event Generation:** The pipeline translates pixel coordinates into business events (`ENTRY`, `ZONE_DWELL`, `BILLING_QUEUE_JOIN`, `EXIT`) using calibrated zone maps and walkable-floor polygons to suppress reflections and phantoms.
 
 **Key Trade-Offs:**
-*   **CPU Inference vs. GPU:** Chose CPU-only inference to ensure the system is highly portable and runs smoothly without CUDA setup. *Limitation accepted:* Lower processing throughput (5 FPS) and smaller input resolution (480px).
-*   **Color-Histogram Re-ID vs. Learned Embeddings:** Chose simple color histograms to minimize dependencies and compute overhead. *Limitation accepted:* Look-alike uniforms can over-merge, reducing cross-camera precision compared to deep Re-ID models.
+*   **CPU Inference vs. GPU:** Chose CPU-only inference to ensure the system is highly portable and runs smoothly without CUDA setup. *Limitation accepted:* Lower processing throughput and smaller input resolution.
+*   **Motion vs. Appearance Association:** I made track association pluggable and default it to **motion** (spatio-temporal stitching) after measuring that appearance Re-ID — color histogram *and* ImageNet CNN embeddings — cannot separate identities on these overhead views (same-person crops are farther apart than different-person crops). Motion fixed the within-camera over-split that appearance could not. *Limitation accepted:* motion association is per-camera, so merging a roaming person across non-overlapping cameras still relies on appearance Re-ID (kept as the fallback) until a floor-plane homography is added.
+*   **Color-Histogram Re-ID vs. Learned Embeddings:** Chose simple color histograms over a deep embedding to minimize dependencies and compute overhead. *Limitation accepted:* on overhead footage both are appearance-based and over-split front/back, which is why motion association — not a heavier appearance model — is the primary identity fix.
 
 # Event Model
 
@@ -69,7 +71,7 @@ Events are written to an append-only JSONL file and POSTed to the API. This enab
 *   **Idempotency:** Unique UUIDs (`event_id`) prevent duplicate records across network retries or manual event replays.
 *   **Structured Logging:** All API requests emit JSON logs containing `trace_id`, endpoint, latency, and status codes for immediate observability.
 *   **Error Handling:** The API uses partial-success ingest. A single malformed event in a batch is flagged in the response payload rather than rejecting the entire batch. Database unavailability results in a graceful HTTP 503 instead of a stack trace.
-*   **Testing:** 138 unit and integration tests cover edge cases (re-entries, missing data) and end-to-end API flows using a test SQLite database.
+*   **Testing:** 164 unit and integration tests cover edge cases (re-entries, missing data, tracklet stitching) and end-to-end API flows using a test SQLite database, plus a pipeline-replay test over the committed events; coverage is gated at 70%.
 *   **Dashboard:** A React SPA polls the API to display the live conversion ring, funnel, and heatmaps without hardcoded dependencies.
 
 # AI-Assisted Decisions
@@ -81,12 +83,12 @@ Events are written to an append-only JSONL file and POSTed to the API. This enab
 4.  **What I chose:** YOLOv8-nano (with a strictly CPU-only PyTorch build).
 5.  **Why I agreed/disagreed:** I agreed with the YOLOv8-nano choice. It is fast on CPU, accurate enough to count people, and integrates directly with ByteTrack. I also enforced the CPU-only PyTorch dependency, as a standard GPU build pulls gigabytes of unused CUDA libraries, violating the fast setup requirement.
 
-### 2. Re-ID Approach
-1.  **Problem:** De-duplicating the same shopper across multiple cameras to compute a precise unique visitor denominator.
-2.  **Options considered:** Treat cameras independently (no Re-ID), OSNet embeddings, Color Histograms.
-3.  **What AI suggested:** Treat cameras independently to simplify the pipeline.
-4.  **What I chose:** Color-histogram Re-ID mapped via cosine distance.
-5.  **Why I agreed/disagreed:** I disagreed with the AI. The core business requirement demands an accurate unique visitor count, which fundamentally requires cross-camera association. However, I chose color histograms over deep embeddings (OSNet) to keep the CPU compute budget strictly bounded.
+### 2. Visitor Identity (Re-ID) Approach
+1.  **Problem:** Assigning one stable `visitor_id` per shopper — both *within* a camera (a person who turns around or is briefly occluded fragments into several tracks) and *across* overlapping cameras — to compute a precise unique-visitor denominator.
+2.  **Options considered:** Treat cameras independently (no Re-ID); appearance Re-ID via color histograms; appearance Re-ID via a learned embedding (OSNet / ImageNet CNN); motion-based tracklet stitching (spatio-temporal continuity).
+3.  **What AI suggested:** First, treat cameras independently to keep the pipeline simple. Later, when one shopper was being over-split into several ids, it suggested strengthening *appearance* — adding a learned OSNet embedding so a person's front-vs-back crops would land closer in feature space.
+4.  **What I chose:** Color-histogram appearance Re-ID for cross-camera de-duplication, **plus a motion-based tracklet stitcher (runs first, default-on) as the primary within-camera identity fix**. Appearance remains the cross-camera fallback (pluggable via `TRACK_ASSOCIATION`).
+5.  **Why I agreed/disagreed:** I disagreed twice. First, treating cameras independently cannot produce an accurate unique-visitor count, so cross-camera association is mandatory. Second — and more consequentially — I tested the AI's "stronger appearance" hypothesis and *measured* that on overhead CCTV the same person's front and back are farther apart than two different people (color histogram **0.66 same vs 0.61 different**; ImageNet CNNs overlap too), so no appearance model — histogram or deep — could separate identities here. Motion can: a person cannot teleport, so a track that dies and one that appears nearby moments later is the same person. Moving the fix from the appearance layer to a motion layer collapsed a roaming staffer from **4 ids to 1** and brought Store 2's footfall into line with ground truth. I still kept color histograms over OSNet for the cross-camera fallback, to bound the CPU compute budget.
 
 ### 3. API Architecture Design
 1.  **Problem:** Reliably transmitting events from the CV pipeline to the database.
@@ -98,5 +100,5 @@ Events are written to an append-only JSONL file and POSTed to the API. This enab
 # Limitations and Future Work
 
 1.  **CPU Bottleneck at Scale:** The computer vision pipeline is currently CPU-bound. Deploying to 40+ stores will require replacing the CPU PyTorch base with a CUDA-enabled image and migrating inference to edge GPUs.
-2.  **Re-ID Under Dense Occlusion:** The color histogram Re-ID struggles with look-alike uniforms and lighting shifts, occasionally over-merging subjects. Upgrading to a lightweight learned embedding model (e.g., OSNet) is the immediate next step for improving cross-camera identity tracking accuracy.
+2.  **Cross-Camera Identity:** Motion-based association (tracklet stitching) now resolves the dominant *within-camera* over-split, but *cross-camera* de-duplication still relies on appearance Re-ID, which is unreliable on overhead views — a roaming staff member can be counted once per camera. The immediate next step is to extend motion association across cameras via a floor-plane homography (a shared coordinate space), rather than a heavier appearance model, which is measurably non-discriminative on this footage. Separately, tightly-packed groups (2–4 people) can still be merged into one detection box — a detection-level limit, addressed by pose/part-based detection rather than tracking.
 3.  **Synchronous Ingestion:** The current API processes ingest POSTs synchronously. For high-throughput live deployments across multiple stores, decoupling ingestion via an in-memory queue or message broker will prevent slow database writes from blocking the upstream CV pipeline.

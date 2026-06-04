@@ -16,8 +16,8 @@ actionable* (the API + dashboard).
       ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ DETECTION PIPELINE  (offline/CV; owns all per-person reasoning)       │
-│   YOLOv8 detect → ByteTrack track → Re-ID (visitor_id, cross-cam,     │
-│   re-entry) → zone & direction logic → emit BEHAVIOURAL events        │
+│   YOLOv8 detect → ByteTrack track → motion stitch (per-cam) → Re-ID   │
+│   (visitor_id, cross-cam, re-entry) → zone & direction → emit EVENTS   │
 └─────────────────────────────────────────────────────────────────────┘
       │  events.jsonl  +  HTTP POST (batched, simulated real-time)
       ▼
@@ -86,17 +86,20 @@ to the loop, analytics, API, or compose.
 ## Data flow (one visitor)
 1. **Detect** — YOLO finds people on sampled frames (CAM3 etc.).
 2. **Track** — ByteTrack links boxes into a stable track; a `visitor_id` is assigned at `ENTRY`.
-3. **Re-ID** — the same person across overlapping cameras / on return maps to the same `visitor_id`
-   (→ `REENTRY`, never a second `ENTRY`).
-4. **Behavioural events** — crossing the entrance line → `ENTRY`/`EXIT`; zone presence →
+3. **Motion stitch (ADR-0037)** — a per-camera tracklet-stitcher re-links a fragmented track (turn-around /
+   brief occlusion → new ByteTrack id) into one **local id** by spatio-temporal continuity, *before* Re-ID,
+   so a person split front/back stays one identity (fixes the overhead over-split appearance can't, ADR-0036).
+4. **Re-ID** — the same person across overlapping cameras / on return maps to the same `visitor_id`
+   (→ `REENTRY`, never a second `ENTRY`). This is the cross-camera fallback; the stitch handles within-camera.
+5. **Behavioural events** — crossing the entrance line → `ENTRY`/`EXIT`; zone presence →
    `ZONE_ENTER`/`ZONE_EXIT`/`ZONE_DWELL` (30 s); billing → `BILLING_QUEUE_JOIN`/`ABANDON`.
-5. **Ingest** — events POSTed in batches to `/events/ingest`; deduped by `event_id` (idempotent).
+6. **Ingest** — events POSTed in batches to `/events/ingest`; deduped by `event_id` (idempotent).
    **Two run modes (ADR-0033):** the **default `docker compose up`** runs the lightweight **`replayer`**,
    which POSTs the committed `data/events/behavior.jsonl` (no YOLO, no clips, no keys → data in seconds —
    the acceptance-gate path). The **full detection pipeline is opt-in** (`docker compose --profile detect
    up` / `DETECTOR_MODE=detect`): the detector runs YOLO over the clips and auto-POSTs via its
    `HttpEventSink` (ADR-0015), regenerating the committed events.
-6. **Serve** — metrics/funnel/heatmap/anomalies computed from stored events at query time; conversion
+7. **Serve** — metrics/funnel/heatmap/anomalies computed from stored events at query time; conversion
    joins POS via the 5-minute billing-window rule ([[BUSINESS_RULES]]). Transactions are filtered
    **per store** by the synthesised `order_id` prefix (`<store_id>_<date>_<time>`).
 

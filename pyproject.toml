@@ -2,7 +2,27 @@
 [tool.pytest.ini_options]
 pythonpath = ["services/common", "services/detector", "services/api"]
 testpaths = ["tests"]
-addopts = "-q"
+# Coverage is gated at 70% (SPEC Part C). The full suite (`pytest`) enforces it; for a quick
+# partial run add `--no-cov`. Requires the dev tooling in requirements-dev.txt.
+addopts = "-q --cov=shelfsense_common --cov=shelfsense_api --cov=app --cov-report=term-missing --cov-fail-under=70"
+
+[tool.coverage.run]
+omit = [
+    "*/tests/*",
+    # IO/orchestration glue that needs a YOLO model or live video to exercise — covered by the
+    # docker pipeline + the integration replay test, not unit-testable here. Excluded so the gate
+    # reflects the business logic we actually unit-test rather than un-runnable boundaries.
+    "*/detector/app/main.py",
+    "*/detector/app/track.py",
+    "*/detector/app/embedding.py",
+    # Streaming scaffolding retained for reference but unused (no broker — ADR-0005).
+    "*/shelfsense_common/stream.py",
+    "*/shelfsense_common/worker.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
 
 [tool.ruff]
 line-length = 100

@@ -40,7 +40,9 @@ class StaffDecider:
         staff_hint: str | None,
         min_confidence: float,
         classify_staff: bool,
+        override_margin: float,
         log,
+        crop_dump_dir: str = "",
     ) -> None:
         self._heuristic = heuristic
         self._vlm = vlm if classify_staff else None
@@ -49,11 +51,16 @@ class StaffDecider:
         self._staff_hint = staff_hint
         self._staff_hint_key = _hint_key(staff_hint)
         self._min_confidence = min_confidence
+        self._override_margin = override_margin
         self._log = log
+        self._crop_dump_dir = crop_dump_dir  # if set, dump one labelled crop per visitor (proof)
+        self._decision_logged: set[str] = set()  # visitor_ids whose decision we've logged once
         # Largest-area crop seen per (camera, track) — the representative image we send to the VLM.
         self._crops: dict[tuple[str, int], tuple[np.ndarray, float]] = {}
         self._verdicts: dict[str, StaffVerdict] = {}  # by visitor_id
         self._failed: set[str] = set()  # visitor_ids whose VLM call errored this run
+        self._track_visitor: dict[tuple[str, int], str] = {}  # (cam,track) -> visitor (for dumps)
+        self._decisions: dict[str, dict] = {}  # visitor_id -> {score, is_staff, source} (for dumps)
 
     # --- frame-time inputs (delegated / accumulated) -----------------------------------------
 
@@ -62,9 +69,9 @@ class StaffDecider:
         self._heuristic.observe(camera_id, track_id, color_score)
 
     def observe_crop(self, camera_id: str, track_id: int, image: np.ndarray, bbox) -> None:
-        """Keep the largest-area person crop per track — the best image to show the VLM."""
-        if self._vlm is None:
-            return  # no VLM → never need crops
+        """Keep the largest-area person crop per track — best image to show the VLM (or to dump)."""
+        if self._vlm is None and not self._crop_dump_dir:
+            return  # no VLM and no dump → never need crops
         h_img, w_img = image.shape[:2]
         x0, y0 = max(0, int(bbox.x)), max(0, int(bbox.y))
         x1, y1 = min(w_img, int(bbox.x + bbox.w)), min(h_img, int(bbox.y + bbox.h))
@@ -81,11 +88,82 @@ class StaffDecider:
     def is_staff(
         self, camera_id: str, track_id: int, visitor_id: str | None, dwell_ms: int = 0
     ) -> bool:
-        """True if this person is staff. Uses the VLM verdict when confident, else the heuristic."""
-        verdict = self._vlm_verdict(camera_id, track_id, visitor_id)
-        if verdict is not None and verdict.confidence >= self._min_confidence:
-            return verdict.is_staff
-        return self._heuristic.is_staff(camera_id, track_id, dwell_ms)
+        """True if staff — VLM baseline + heuristic high-confidence override (ADR-0032).
+
+        The VLM is the cross-store baseline (it generalises to any store). Where a store has a
+        **distinctive uniform**, a decisive per-store colour match — score at least
+        `override_margin` above the threshold — **overrides** the VLM to staff (a confident but
+        wrong VLM cannot demote known uniformed staff, e.g. Store_1's black). This is asymmetric:
+        a LOW colour score is NOT proof of "customer" (the uniform may be occluded / the person in
+        a back room), so it does not override — it defers to the VLM, with the heuristic threshold
+        as the fallback only when the VLM can't decide (off / no crop / low confidence / error).
+        """
+        if visitor_id is not None:
+            self._track_visitor[(camera_id, track_id)] = visitor_id
+        score = self._heuristic.mean_color_score(camera_id, track_id)
+        threshold = self._heuristic.threshold
+
+        if score >= threshold + self._override_margin:
+            decision, source = True, "heuristic_override"
+        else:
+            verdict = self._vlm_verdict(camera_id, track_id, visitor_id)
+            if verdict is not None and verdict.confidence >= self._min_confidence:
+                decision, source = verdict.is_staff, f"vlm_{verdict.source}"
+            else:
+                decision = self._heuristic.is_staff(camera_id, track_id, dwell_ms)
+                source = "heuristic_fallback"
+
+        self._log_decision(visitor_id, score, threshold, decision, source)
+        return decision
+
+    def _log_decision(
+        self, visitor_id: str | None, score: float, threshold: float, decision: bool, source: str
+    ) -> None:
+        """Emit one explainable staff decision per visitor (observability / calibration aid)."""
+        if visitor_id is None or visitor_id in self._decision_logged:
+            return
+        self._decision_logged.add(visitor_id)
+        self._decisions[visitor_id] = {
+            "score": round(score, 3), "is_staff": decision, "source": source
+        }
+        self._log.info(
+            "staff_decision",
+            visitor=visitor_id,
+            colour_score=round(score, 3),
+            threshold=threshold,
+            is_staff=decision,
+            source=source,
+        )
+
+    def dump_crops(self) -> None:
+        """Write one labelled crop per visitor to `crop_dump_dir` (proof / adjudication aid).
+
+        No-op unless `crop_dump_dir` is set. Picks the largest crop seen across the visitor's tracks
+        and names the file by visitor, classification and colour score so the people behind the
+        numbers can be eyeballed (e.g. to confirm a borderline staff/customer call).
+        """
+        if not self._crop_dump_dir:
+            return
+        import os
+
+        import cv2
+
+        os.makedirs(self._crop_dump_dir, exist_ok=True)
+        best: dict[str, tuple[np.ndarray, float]] = {}  # visitor -> (crop, area)
+        for (cam, track), (crop, area) in self._crops.items():
+            vid = self._track_visitor.get((cam, track))
+            if vid is None:
+                continue
+            if vid not in best or area > best[vid][1]:
+                best[vid] = (crop, area)
+        for vid, (crop, _area) in best.items():
+            d = self._decisions.get(vid, {})
+            label = "STAFF" if d.get("is_staff") else "cust"
+            score = d.get("score", 0.0)
+            source = d.get("source", "na")
+            name = f"{self._store_id}_{vid}_{label}_c{score:.2f}_{source}.jpg"
+            cv2.imwrite(os.path.join(self._crop_dump_dir, name), crop)
+        self._log.info("staff_crops_dumped", store=self._store_id, count=len(best))
 
     def _vlm_verdict(
         self, camera_id: str, track_id: int, visitor_id: str | None
