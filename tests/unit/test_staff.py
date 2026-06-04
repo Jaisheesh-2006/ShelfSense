@@ -12,6 +12,9 @@
 #   - Tests: color_fraction on all-in-bounds / all-out / half
 #     arrays; a high-scoring track is staff, a low-scoring
 #     (customer) track is not; the running mean is used; presence fallback flags only when enabled.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the color-uniform staff classifier."""
 
 import numpy as np

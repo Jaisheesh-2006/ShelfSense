@@ -7,6 +7,9 @@
 # Constraints: pure/deterministic, tz-aware UTC; cover busiest-zone=100 scaling, WARN/CRITICAL queue
 #   thresholds, conversion-drop only at ok confidence, dead-zone dormant on a short window, lag.
 # Output: pytest tests asserting scores, severities, types, and stale booleans.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

@@ -7,6 +7,9 @@
 # Constraints: pure/deterministic, no IO/network; tz-aware UTC timestamps; cover staff exclusion,
 #   REENTRY (no double count), conversion-by-window, abandonment, per-zone dwell, and zero-traffic.
 # Output: pytest tests asserting stage counts, drop-off bounds, conversion rate, and metric fields.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

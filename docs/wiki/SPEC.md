@@ -14,8 +14,9 @@
 >   a **7-column POS sample** (not the documented `transaction_id`/`basket_value_inr` shape), **13 sample events**
 >   (not 200), and **no `assertions.py`**. So we still **self-derive zones** (from the PNGs) and **self-validate**.
 > - **`sample_events.jsonl` now EXISTS** and uses a **richer schema that conflicts with the PDF's page-5
->   "Required Output Schema"** (the flat schema our code emits). This is an open decision — see
->   "REQUIRED event schema" below, [[EVENT_SCHEMA]], and [[DECISIONS]] ADR-0024.
+>   "Required Output Schema"** (the flat schema our code emits). **Decided (ADR-0024 D1): keep the flat
+>   page-5 schema; the sample is informational only** — see "REQUIRED event schema" below, [[EVENT_SCHEMA]],
+>   and [[DECISIONS]] ADR-0024.
 > - **`store_id = "ST1008"`** in the POS (Store_1). Store_2 has no POS and no assigned store_id yet.
 
 ## North Star
@@ -61,14 +62,16 @@ Flat behavioural events (one object per behaviour), not raw bbox detections:
 `ZONE_EXIT` · `ZONE_DWELL` (every 30s of continuous dwell) · `BILLING_QUEUE_JOIN` (set queue_depth) ·
 `BILLING_QUEUE_ABANDON` (left billing before a POS txn) · `REENTRY` (same visitor_id after an EXIT).
 
-> ⚠️ **Schema tension (open — ADR-0024).** The above is the PDF's page-5 *Required Output Schema* and the
+> ✅ **Schema tension — DECIDED (ADR-0024 D1).** The above is the PDF's page-5 *Required Output Schema* and the
 > gate example uses it — **our code emits exactly this**. But the delivered **`sample_events.jsonl`** uses a
 > **different, richer schema** (lowercase event types; `id_token`/`track_id` instead of `visitor_id`;
 > `event_timestamp`/`event_time` instead of `timestamp`; plus **demographics** `gender_pred`/`age_pred`/
 > `age_bucket`, **`is_face_hidden`**, **groups** `group_id`/`group_size`, **zone metadata** `zone_name`/
 > `zone_type`/`is_revenue_zone`/`zone_hotspot_x,y`, and **queue analytics** `queue_join_ts`/`served_ts`/
-> `exit_ts`/`wait_seconds`/`queue_position_at_join`/`abandoned`). Keep the flat schema, adopt the sample's,
-> or enrich ours toward it? **Pending discussion** — see [[EVENT_SCHEMA]], [[GROUND_TRUTH]] §5.
+> `exit_ts`/`wait_seconds`/`queue_position_at_join`/`abandoned`). **We keep the flat page-5 schema** (the
+> authoritative, gate-referenced contract) and treat the sample as **informational only** — it is internally
+> inconsistent and from a different sample store (`store_1076`), so adopting it is a refactor for no scoring
+> gain. See [[EVENT_SCHEMA]], [[GROUND_TRUTH]] §5.
 
 ## REQUIRED API endpoints
 | Endpoint | Returns | Key requirements |

@@ -12,6 +12,9 @@
 # Constraints: assertions are DERIVED FROM THE DATA (distinct non-staff visitor ids, monotonic
 #   funnel, cross-endpoint agreement) — never hardcoded counts — so the test survives data changes.
 # Output: pytest tests using the shared `client` fixture (tests/integration/conftest.py).
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

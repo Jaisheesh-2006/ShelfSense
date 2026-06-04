@@ -7,6 +7,9 @@
 #   on-demand incremental flush (per-camera, ADR-0018), idempotent re-send shape,
 #   give-up-after-retries (non-fatal), and FanOut fanning write+flush to all children.
 # Output: pytest tests using a fake transport that records the POSTed bodies.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

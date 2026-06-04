@@ -129,8 +129,8 @@
 - ✅ Final **acceptance-gate dry-run** against [[SPEC]] §gate on a clean machine.
 
 ## Phase 4 — Dataset re-grounding (corrected dataset, 2026-06-02, ADR-0024)
-> The team replaced `docs/raw/` with a corrected dataset ([[GROUND_TRUTH]] §0). Wiki re-derived; **code
-> unchanged pending the user's decisions.** These tasks start once D1–D4 are settled.
+> The team replaced `docs/raw/` with a corrected dataset ([[GROUND_TRUTH]] §0). Wiki re-derived. **Decisions
+> settled: D1 (keep flat schema), D2 (Store_2 = ST1009), D3 (POS loader) — done; D4 (demographics) deferred.**
 - ✅ **Re-derive the wiki** from the new raw (GROUND_TRUTH + propagate).
 - ✅ **D1 — Event schema decision (user): keep the flat PDF page-5 schema** — the pipeline "must emit
   this." The richer `sample_events.jsonl` signals (demographics, groups, zone metadata, queue analytics)

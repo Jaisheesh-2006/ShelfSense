@@ -28,8 +28,8 @@
 ## TL;DR — what this project is
 
 Build a **Store Intelligence System** that turns raw retail **CCTV footage** into business
-metrics — headline metric: **store conversion rate**. It's the UpGrad/Purplle Store
-Intelligence Challenge (April 2026). Evaluated as an **end-to-end systems problem**, not an
+metrics — headline metric: **store conversion rate**. It's the Purplle Store
+Intelligence Challenge. Evaluated as an **end-to-end systems problem**, not an
 ML accuracy problem. Store: **Purplle "Brigade_Bangalore" (ST1008)**, data from **10-Apr-2026**.
 
 Pipeline: `CCTV → detector (YOLO + ByteTrack + Re-ID) → behavioural events → api (FastAPI, ingest + metrics) → frontend`, glued by the structured event schema, with Postgres, Dockerized, observable. See [[ARCHITECTURE]].
@@ -43,7 +43,8 @@ Pipeline: `CCTV → detector (YOLO + ByteTrack + Re-ID) → behavioural events �
    REQUIRED** (`visitor_id`, `REENTRY`, cross-camera dedup — reversed PD-5; ADR-0005).
 0a. **⚠ Dataset corrected (2026-06-02):** the old "print mistake" theory is **retired** — the PDF is real
    as written. A **`sample_events.jsonl` now exists** whose schema is **richer than/conflicts with** the
-   PDF's page-5 schema we built — **open decision** ([[GROUND_TRUTH]] §0/§5, ADR-0024). See [[STATE]].
+   PDF's page-5 schema we built — **decided (ADR-0024 D1): keep the flat page-5 schema; the sample is
+   informational only** ([[GROUND_TRUTH]] §0/§5, ADR-0024). See [[STATE]].
 1. **Headline metric (North Star):** conversion rate = `converted visitors ÷ unique visitors`,
    where "converted" = in the billing zone within 5 min before a POS transaction. See [[BUSINESS_RULES]].
 2. **Raw inputs:** **2 stores** now — Store_1 (= the old Brigade store, 4 role-named cams, ~2-min, 1920×1080)

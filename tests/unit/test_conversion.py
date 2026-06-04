@@ -11,6 +11,9 @@
 # Output:
 #   - Tests: match at the window edge, miss one ms past it; converted/abandon split; rate math;
 #     empty presences -> 0 + low confidence; confidence flips to "ok" above threshold; day-metrics.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the pure conversion correlation + day metrics."""
 
 from datetime import UTC, datetime, timedelta

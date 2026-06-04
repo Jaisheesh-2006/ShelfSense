@@ -8,8 +8,9 @@
    ✅ *Handled by design:* counting is per-tracked-person (per `visitor_id`), never per blob — a group
    yields one track/visitor each. No grouping logic needed.
    ⓘ *New (corrected dataset):* `sample_events.jsonl` carries explicit **`group_id` / `group_size`** on
-   entry/exit ([[EVENT_SCHEMA]]). We could *populate* those (group attribution) as an enrichment — pending
-   the schema decision (ADR-0024) — but counting individuals already satisfies the requirement.
+   entry/exit ([[EVENT_SCHEMA]]). We could *populate* those (group attribution) as an enrichment, but
+   **ADR-0024 D1 keeps the flat schema (the sample is informational only)** and counting individuals already
+   satisfies the requirement — so it stays out of scope.
 2. **Staff movement** → classify `is_staff=true` and **exclude from customer metrics**.
    ✅ *(ADR-0009/0032):* `is_staff` from a **per-store uniform-colour score** — a `COLOR_HEURISTICS`
    registry in `detector/app/staff.py` (Store_1 = **black**, both upper+lower body; Store_2 = **pink**,
@@ -46,9 +47,11 @@
    appearance gallery and collapses fragmented ids by spatio-temporal continuity (last position + velocity,
    not pixels). Store_2's ZONE staffer went from **4 ids → 1**; footfall now matches GT. **Cross-camera**
    dedup still leans on appearance (positions aren't comparable across cameras), so a roaming staffer seen on
-   several cameras is still over-counted — a floor-plane homography would extend motion association across
-   cameras (deferred, ADR-0037 alt-c). Honest crowd output = head-count band + per-camera figures
-   ([[GROUND_TRUTH]] §1).
+   several cameras is still over-counted. The textbook fix — a floor-plane homography — is **not feasible on
+   this dataset (decided, ADR-0039):** Store_2's cameras are non-overlapping *and* were recorded on different
+   real days (synthetic timeline), so a spatio-temporal cross-camera merge would *fabricate* identities. It is
+   documented as a data limitation; its only effect (staff +2) is within the accepted ±1–2. Honest crowd
+   output = head-count band + per-camera figures ([[GROUND_TRUTH]] §1).
 
 9. **Tightly-packed groups** (2+ people standing together) → should count as individuals.
    ⚠ *Partial — a detection limit, not a logic/association one:* per-tracked-person counting handles a
@@ -57,8 +60,12 @@
    nearby boxes, and motion stitching (ADR-0037) does **not** worsen it (it links fragments, never merges
    coexisting tracks). A tried inference-size bump (`detector_imgsz=960` on ST1009) did **not** separate
    tight groups (count didn't rise, just slower) and was **reverted** — the merge happens at the box level,
-   before tracking. Genuinely separating a 2–4-person cluster needs pose/part-based or crowd-density
-   detection, beyond a box detector — documented, deferred.
+   before tracking. ⚠ **Optional pose splitter (ADR-0038) — measured no gain:** `GROUP_SPLIT=pose` runs
+   YOLOv8-pose on frames with a *wide* box and splits the merged box into one sub-track per skeleton (off by
+   default, gate-safe — the replay/default path never loads a second model). Clean A/B: **Store_2 unique
+   22→22, no net gain** — overhead groups stand front-to-back, so a merged pair is a *tall* box (only ~5% of
+   boxes hit the width gate) and pose keypoints degrade under occlusion. Kept as a tested, opt-in capability;
+   the group-merge gap stays a documented overhead-CCTV detection limit ([[GROUND_TRUTH]] §1).
 
 8. **Mirror / reflective-surface phantoms** (CAM5 mirror, backlit displays, wall posters) → a reflection
    is not a person. ✅ *Slice 2.4b (ADR-0010):* a calibrated **walkable-floor mask** drops detections whose

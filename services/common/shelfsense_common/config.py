@@ -116,6 +116,18 @@ class Settings(BaseSettings):
     stitch_min_gap_ms: int = 150  # shortest absence; lifted above 1 sampled-frame interval so a
     # still-live track (sub-frame gap) can never be mistaken for lost and stolen by another person.
     stitch_max_jump_frac: float = 0.12  # max predicted-position jump as a fraction of max(W, H)
+    # --- Group splitting (pose-based, ADR-0038) ---
+    # YOLO boxes 2-4 tightly-packed shoppers as ONE track on overhead views, deflating the unique
+    # count (Store_2: 17 vs 22 GT). "pose" runs a second model (YOLOv8-pose) on frames containing a
+    # wide box, counts skeletons inside it, and splits the box into one sub-track per person. OFF by
+    # default ("none") so the replay gate and default detect pass never load a second model — opt in
+    # only for the offline accuracy pass. A box is a group candidate when w/h >= min_aspect (a lone
+    # standing person is tall, ratio < 1); we split only when >= min_people skeletons are inside.
+    group_split: str = "none"  # "none" (default, gate-safe) | "pose"
+    group_split_pose_model: str = "yolov8n-pose.pt"
+    group_split_pose_conf: float = 0.25  # YOLO-pose detection confidence floor
+    group_split_min_aspect: float = 0.85  # box width/height ratio above which a box may be a group
+    group_split_min_people: int = 2  # min skeletons inside a candidate box before it is split
     # Staff classification (Slice 2.4b, ADR-0009/0032/0027): the PRIMARY signal is the optional VLM
     # (staff/customer per person, see below); the always-available FALLBACK is a per-store
     # uniform-COLOUR match (StoreConfig.staff_heuristic_color — black=Store_1, pink=Store_2).

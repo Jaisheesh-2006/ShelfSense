@@ -57,6 +57,14 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
 
 ## Recent decisions (newest first → see [[DECISIONS]])
 
+- **ADR-0039** cross-camera identity — **not feasible on this dataset**, skip + document (user, 2026-06-04):
+  Store_2 cams are non-overlapping AND recorded on different real days (no true time-sync), so a homography/
+  spatio-temporal merge would *fabricate* identities. Its only payoff (staff +2) is within the accepted
+  ±1–2. Supersedes ADR-0037 alt-c ("deferred homography").
+- **ADR-0038** pose group-split (opt-in `GROUP_SPLIT="pose"`, off by default): pluggable YOLOv8-pose splitter
+  for merged-group boxes. **Measured no net gain** (Store_2 22→22) — overhead groups are front-to-back (tall
+  boxes, only ~5% trip the width gate) + pose occlusion-limited; same root cause as imgsz-960. Kept as a
+  tested, gate-safe capability; committed events reverted to baseline. An honest negative, not a fix.
 - **ADR-0037** tracking-based association (motion tracklet-stitch, default on): fixes the within-camera
   over-split ADR-0036 deferred — Store_2 ZONE staffer 4 ids → 1, footfall now matches GT. Pluggable
   (`TRACK_ASSOCIATION`), pure/gate-safe; appearance gallery kept as cross-camera fallback.
@@ -82,10 +90,12 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
 — ST1008 106 events / ST1009 183 events, replay E2E green. Next: a clean-machine `docker compose down -v &&
 up --build` gate dry-run.
 
-Known limits (documented, not bugs — [[GROUND_TRUTH]] §1, [[EDGE_CASES]], ADR-0036/0037): the within-camera
-**over-split is fixed** by motion association (ADR-0037); what remains is **cross-camera** identity (a
-roaming staffer counted per camera — needs a floor-plane homography to extend motion association across
-views; appearance is measured-unfixable, ADR-0036), **tight groups merge** at the box level (a detection
-limit — imgsz 960 didn't help, reverted), and the **staff split is ±1–2** at the margin. Store_2 has no POS
-→ conversion N/A. Deferred: demographics (full-face-blurred footage). The learned-embedder hook
-(`reid_backend=cnn`) remains as parked infrastructure.
+Known limits (documented, not bugs — [[GROUND_TRUTH]] §1, [[EDGE_CASES]], ADR-0036/0037/0038/0039): the
+within-camera **over-split is fixed** by motion association (ADR-0037); what remains is **cross-camera**
+identity (a roaming staffer counted per camera — **not feasible on this dataset**: the cams don't overlap
+and aren't time-synced, so a homography would fabricate identities; appearance is measured-unfixable —
+ADR-0039/0036), and **tight groups merge** at the box level (a detection limit — imgsz 960 *and* the
+opt-in pose splitter both measured **no gain**, ADR-0038). The **staff split is ±1–2** at the margin (user
+accepts this). Store_2 has no POS → conversion N/A. Deferred: demographics (full-face-blurred footage). The
+learned-embedder (`reid_backend=cnn`) and pose splitter (`GROUP_SPLIT=pose`) remain as parked, gate-safe
+capabilities.

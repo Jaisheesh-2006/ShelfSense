@@ -10,6 +10,9 @@
 # Output:
 #   - Tests: first join depth 1, second depth 2; staff excluded; repeat join is a no-op; leave frees
 #     a slot so a later join re-counts; occupancy reflects current customers.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the billing-queue tracker."""
 
 from app.billing import BillingTracker

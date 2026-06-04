@@ -1,104 +1,93 @@
-# System Overview
+# ShelfSense — System Design
 
-**Business Problem:** Offline retail lacks the session and funnel analytics native to e-commerce. Retailers need visibility into customer behavior—such as entry, zone visits, billing queues, and conversions—to optimize store layout and staffing.
-**North-Star Metric:** Offline store conversion rate (`converted visitors / unique visitors`).
-**High-Level Approach:** A containerized system that ingests CCTV footage, processes it via a computer vision pipeline to extract tracking and behavioral events, and stores these events in a relational database for querying. The architecture explicitly decouples heavy CV processing from the intelligence API via a strict event contract. This enables offline batching, robust replayability, and independent scaling of the analytical backend.
+## Overview
 
-# Architecture
+- **Problem:** physical retail lacks the funnel analytics e-commerce takes for granted — who enters, where they dwell, where they drop off, whether they buy.
+- **North-star metric:** offline conversion rate = `converted visitors / unique visitors`.
+- **Approach:** an event-driven system — a CV pipeline turns CCTV into behavioral events; an API ingests, stores, and computes metrics on read. A strict event schema decouples the two, enabling offline batching, replay, and independent scaling.
 
-**End-to-End Architecture Diagram:**
+## Architecture
+
 ```text
-CCTV Clips → [Detection Pipeline (YOLO + ByteTrack + Motion Stitch + Re-ID + VLM Staff Logic)]
-                  ↓
-             (behavioral events: JSONL / HTTP POST)
-                  ↓
-             [Intelligence API] → PostgreSQL
-                  ↓
-             [Dashboard] (Live React SPA & Grafana)
+CCTV clips
+   │  YOLO + ByteTrack + motion stitch + Re-ID + staff classification
+   ▼
+behavioral events ──(JSONL + HTTP POST)──► Intelligence API ──► PostgreSQL
+                                                  │
+                                                  ▼
+                                  React dashboard + Prometheus / Grafana
 ```
 
-**Data Flow:**
-1. The **Detection Pipeline** ingests raw video, detects and tracks people, and de-duplicates identities across overlapping cameras.
-2. A **Vision-Language Model (VLM)** classifies staff versus customers based on uniform appearance, filtering staff out of the customer metrics.
-3. The pipeline emits behavioral events, flushing them via HTTP POST to the **Intelligence API** while logging to an append-only JSONL file.
-4. The API validates events against a strict schema and persists them to **PostgreSQL**.
-5. Endpoints compute funnel metrics and conversion rates dynamically on read, serving a React dashboard and Prometheus/Grafana.
+- **Detection pipeline** owns all pixels: detection, tracking, identity, sessionization, spatial reasoning.
+- **Intelligence API** owns ingest, validation, persistence, and metric computation — it never sees a pixel.
+- **The event schema is the only contract between them**, so either tier can be rebuilt independently.
 
-**Boundaries & Responsibilities:**
-The pipeline owns all computer vision, sessionization, and spatial reasoning. The API owns data ingestion, validation, persistence, and metric computation. The event schema acts as the strict boundary between the two. The API has no knowledge of pixels or tracking logic, and the pipeline has no knowledge of business metric aggregations.
+## Assumptions (forced by the data)
 
-### Key Architectural Assumptions
-1. **Visitor Definition:** A unique visitor is defined by cross-camera Re-ID association. All cameras contribute to this count to accurately capture shoppers.
-2. **Conversion Correlation:** Since POS records lack customer identifiers, conversion is inferred by associating a customer's presence in the billing zone with a POS transaction within a 5-minute time window.
-3. **Staff Exclusion:** Staff must be excluded from the conversion denominator. This requires uniform-based classification rather than relying purely on dwell time.
-4. **Zone Mapping:** Camera fields of view map to semantic zones (e.g., checkout, skincare aisle) derived directly from the physical floor plans.
-5. **Eventual Consistency:** The analytical backend assumes that metrics are computed at query time over the latest available data, tolerating minor ingestion delays from the CV pipeline.
+- **Unique visitor** = one cross-camera Re-ID identity; all cameras contribute, gated to solid in-store tracks.
+- **Conversion** has no `customer_id`, so it correlates billing-zone presence to a POS transaction within a 5-minute window.
+- **Staff** are excluded from the denominator via uniform-based classification, not dwell time.
+- **Zones** map each camera view to a floor-plan region (checkout, skincare aisle, …).
+- **Metrics are read-time** over the latest events; minor ingest lag is tolerated.
 
-# Detection Layer
+## Detection Layer
 
-*   **Detection:** YOLOv8n handles base detection on CPU to meet strict resource constraints without requiring hardware accelerators.
-*   **Tracking:** ByteTrack associates frame-by-frame detections into stable, occlusion-resistant trajectories.
-*   **Track Association (Tracklet Stitching):** A pluggable, motion-based associator stitches fragmented tracks — caused by a person turning around or a brief occlusion that ends a ByteTrack id and starts a new one — back into a single identity using spatio-temporal continuity (last position + velocity prediction within a short time gap), *before* appearance Re-ID. This addresses the dominant error on overhead cameras, where the same person seen front-vs-back is measurably *less* similar in appearance than two different people, so appearance alone over-splits one shopper into several ids.
-*   **Re-ID:** A lightweight HSV color-histogram signature, matched via cosine distance, de-duplicates customers across overlapping cameras (the fallback when spatial continuity does not apply, i.e. across non-overlapping camera views).
-*   **Staff Identification:** A Vision-Language Model (Groq/Llama) classifies staff versus customers based on uniform appearance. A color-based heuristic serves as the offline fallback.
-*   **Event Generation:** The pipeline translates pixel coordinates into business events (`ENTRY`, `ZONE_DWELL`, `BILLING_QUEUE_JOIN`, `EXIT`) using calibrated zone maps and walkable-floor polygons to suppress reflections and phantoms.
+- **Detect:** YOLOv8n, CPU-only — portable, no CUDA setup.
+- **Track:** ByteTrack for stable, occlusion-resistant trajectories.
+- **Stitch (primary identity fix):** a motion associator re-links fragmented tracks (a person turning or briefly occluded) by spatio-temporal continuity, *before* appearance Re-ID.
+- **Re-ID:** HSV color-histogram, cosine-matched, for cross-camera de-duplication — the fallback where motion can't apply.
+- **Group split (optional):** `GROUP_SPLIT=pose` splits a merged-group box into one sub-track per skeleton; off by default, gate-safe.
+- **Staff:** a VLM (Groq/Llama) classifies staff vs customer; a per-store color heuristic is the offline fallback.
+- **Events:** zone maps + walkable-floor polygons turn coordinates into `ENTRY` / `ZONE_DWELL` / `BILLING_QUEUE_JOIN` / `EXIT`, suppressing reflections and phantoms.
 
-**Key Trade-Offs:**
-*   **CPU Inference vs. GPU:** Chose CPU-only inference to ensure the system is highly portable and runs smoothly without CUDA setup. *Limitation accepted:* Lower processing throughput and smaller input resolution.
-*   **Motion vs. Appearance Association:** I made track association pluggable and default it to **motion** (spatio-temporal stitching) after measuring that appearance Re-ID — color histogram *and* ImageNet CNN embeddings — cannot separate identities on these overhead views (same-person crops are farther apart than different-person crops). Motion fixed the within-camera over-split that appearance could not. *Limitation accepted:* motion association is per-camera, so merging a roaming person across non-overlapping cameras still relies on appearance Re-ID (kept as the fallback) until a floor-plane homography is added.
-*   **Color-Histogram Re-ID vs. Learned Embeddings:** Chose simple color histograms over a deep embedding to minimize dependencies and compute overhead. *Limitation accepted:* on overhead footage both are appearance-based and over-split front/back, which is why motion association — not a heavier appearance model — is the primary identity fix.
+**Key trade-offs**
+- **CPU over GPU** — portable, at the cost of throughput and input resolution.
+- **Motion over appearance for identity** — measured that appearance can't separate identities on overhead views (same-person crops land *farther* apart than different-person crops), so motion is primary and appearance is the cross-camera fallback.
+- **Color histogram over a learned embedding** — fewer dependencies; acceptable because motion, not a heavier appearance model, is the real fix.
 
-# Event Model
+## Event Model
 
-**Why Behavioral Events?**
-Instead of emitting raw bounding boxes or tracking points, the CV layer emits semantic events (e.g., `ZONE_DWELL`). This compresses the data stream by orders of magnitude, prevents PII (raw video frames) from entering the storage layer, and drastically simplifies downstream analytics.
+- **Semantic events, not raw boxes:** emitting `ZONE_DWELL` and friends shrinks the data stream by orders of magnitude, keeps video PII out of storage, and simplifies analytics.
+- **Replay-friendly:** events are appended to JSONL and POSTed, so the API runs on pre-generated events with no CV. Extends cleanly to a broker (Kafka) under high write throughput.
 
-**Scalability & Replay:**
-Events are written to an append-only JSONL file and POSTed to the API. This enables the API to be tested, developed, and deployed independently using pre-generated events without re-running heavy CV models. In a production environment, this event-driven design easily extends to message brokers (like Kafka) to buffer high-throughput writes.
+## Intelligence Layer
 
-# Intelligence Layer
+- **Ingest:** idempotent `POST /events/ingest`, deduped on `event_id` — safe replays, no double-counting.
+- **Storage:** PostgreSQL as source of truth; SQLite for hermetic tests.
+- **Metrics:** computed at query time — simpler, and fast at current volumes.
+- **Funnel:** `Entry → Zone → Billing → Purchase`, monotonic, staff-excluded.
+- **Anomalies:** queue spikes and conversion drops, with configurable baselines where history is absent.
+- **Health:** feed freshness measured against the latest ingested event, so replays read healthy.
 
-*   **Ingestion:** An idempotent `POST /events/ingest` endpoint accepts batched events. The system dedups on `event_id`, ensuring safe replays and preventing double-counting during network retries.
-*   **Storage:** PostgreSQL serves as the durable source of truth, providing robust transactional guarantees. SQLite is utilized for hermetic unit testing.
-*   **Metrics Computation:** Metrics (footfall, dwell time, conversion) are computed at query time rather than materialized incrementally. This approach simplifies the backend architecture and remains highly performant at current data volumes.
-*   **Funnel Generation:** The funnel (`Entry → Zone Visit → Billing Queue → Purchase`) enforces a monotonic subset constraint to represent drop-off accurately while aggressively filtering out staff sessions.
-*   **Anomaly Detection:** Heuristic-based alerts (e.g., queue spikes, conversion drops) run dynamically. For metrics requiring historical baselines, synthetic baselines are configurable to bootstrap the system.
-*   **Health Monitoring:** Feed freshness is monitored relative to the latest ingested event, ensuring accurate health states even when replaying historical data batches.
+## Production Readiness
 
-# Production Readiness
+- **One command:** `docker compose up --build` runs API + DB + dashboard; heavy CV is behind `--profile detect`, defaulting to fast replay to respect reviewer time.
+- **Idempotency:** deterministic `event_id` survives network retries and re-runs.
+- **Observability:** JSON request logs (`trace_id`, endpoint, latency, status).
+- **Resilience:** partial-success ingest (one bad event doesn't fail the batch); DB down → structured 503, never a stack trace.
+- **Testing:** 164 unit + integration tests (re-entry, missing data, tracklet stitching, end-to-end replay); coverage gated at 70%.
+- **Dashboard:** a React SPA polling the live conversion ring, funnel, and heatmaps.
 
-*   **Docker Strategy:** `docker compose up --build` brings up the API, DB, and dashboard. The heavy CV pipeline is isolated behind a `--profile detect` flag, respecting reviewer time by defaulting to a fast data replay.
-*   **Idempotency:** Unique UUIDs (`event_id`) prevent duplicate records across network retries or manual event replays.
-*   **Structured Logging:** All API requests emit JSON logs containing `trace_id`, endpoint, latency, and status codes for immediate observability.
-*   **Error Handling:** The API uses partial-success ingest. A single malformed event in a batch is flagged in the response payload rather than rejecting the entire batch. Database unavailability results in a graceful HTTP 503 instead of a stack trace.
-*   **Testing:** 164 unit and integration tests cover edge cases (re-entries, missing data, tracklet stitching) and end-to-end API flows using a test SQLite database, plus a pipeline-replay test over the committed events; coverage is gated at 70%.
-*   **Dashboard:** A React SPA polls the API to display the live conversion ring, funnel, and heatmaps without hardcoded dependencies.
+## AI-Assisted Decisions
 
-# AI-Assisted Decisions
+**1. Detection model**
+- *Options:* YOLOv8 (n/s/m), YOLOv9 / RT-DETR, MediaPipe.
+- *AI suggested:* YOLOv8 baseline, nano on CPU; a larger model for occluded billing frames.
+- *Chosen:* YOLOv8-nano, CPU-only PyTorch. **Agreed** — fast and accurate enough to count people, integrates with ByteTrack; I enforced the CPU-only build to avoid pulling gigabytes of unused CUDA.
 
-### 1. Detection Model Selection
-1.  **Problem:** Required a fast, accurate person detector that runs efficiently without specialized hardware.
-2.  **Options considered:** YOLOv8 (nano / small / medium), YOLOv9 / RT-DETR, MediaPipe.
-3.  **What AI suggested:** YOLOv8 as a strong baseline; nano for CPU; noted a larger variant or RT-DETR would help on heavily occluded billing frames.
-4.  **What I chose:** YOLOv8-nano (with a strictly CPU-only PyTorch build).
-5.  **Why I agreed/disagreed:** I agreed with the YOLOv8-nano choice. It is fast on CPU, accurate enough to count people, and integrates directly with ByteTrack. I also enforced the CPU-only PyTorch dependency, as a standard GPU build pulls gigabytes of unused CUDA libraries, violating the fast setup requirement.
+**2. Visitor identity (Re-ID)**
+- *Options:* independent cameras; histogram Re-ID; learned embedding (OSNet); motion stitching.
+- *AI suggested:* start with independent cameras, then strengthen *appearance* with a learned embedding.
+- *Chosen:* histogram Re-ID for cross-camera de-dup + a motion stitcher (default-on) as the primary within-camera fix. **Disagreed twice** — independent cameras can't give an accurate count; and I measured that on overhead CCTV appearance can't separate identities (same `0.66` vs different `0.61`), so I moved the fix to a motion layer — collapsing a roaming staffer from 4 ids to 1 and aligning Store 2 footfall with ground truth.
 
-### 2. Visitor Identity (Re-ID) Approach
-1.  **Problem:** Assigning one stable `visitor_id` per shopper — both *within* a camera (a person who turns around or is briefly occluded fragments into several tracks) and *across* overlapping cameras — to compute a precise unique-visitor denominator.
-2.  **Options considered:** Treat cameras independently (no Re-ID); appearance Re-ID via color histograms; appearance Re-ID via a learned embedding (OSNet / ImageNet CNN); motion-based tracklet stitching (spatio-temporal continuity).
-3.  **What AI suggested:** First, treat cameras independently to keep the pipeline simple. Later, when one shopper was being over-split into several ids, it suggested strengthening *appearance* — adding a learned OSNet embedding so a person's front-vs-back crops would land closer in feature space.
-4.  **What I chose:** Color-histogram appearance Re-ID for cross-camera de-duplication, **plus a motion-based tracklet stitcher (runs first, default-on) as the primary within-camera identity fix**. Appearance remains the cross-camera fallback (pluggable via `TRACK_ASSOCIATION`).
-5.  **Why I agreed/disagreed:** I disagreed twice. First, treating cameras independently cannot produce an accurate unique-visitor count, so cross-camera association is mandatory. Second — and more consequentially — I tested the AI's "stronger appearance" hypothesis and *measured* that on overhead CCTV the same person's front and back are farther apart than two different people (color histogram **0.66 same vs 0.61 different**; ImageNet CNNs overlap too), so no appearance model — histogram or deep — could separate identities here. Motion can: a person cannot teleport, so a track that dies and one that appears nearby moments later is the same person. Moving the fix from the appearance layer to a motion layer collapsed a roaming staffer from **4 ids to 1** and brought Store 2's footfall into line with ground truth. I still kept color histograms over OSNet for the cross-camera fallback, to bound the CPU compute budget.
+**3. Pipeline → API transport**
+- *Options:* a Kafka-compatible broker (Redpanda) vs. batched HTTP POST.
+- *AI suggested:* a broker for scalability, then the simpler path.
+- *Chosen:* idempotent HTTP POST, broker dropped. **Disagreed** with the broker — for a single producer/consumer it adds infrastructure and failure modes; idempotent ingest gives the same reliability with far less operational risk.
 
-### 3. API Architecture Design
-1.  **Problem:** Reliably transmitting events from the CV pipeline to the database.
-2.  **Options considered:** A Kafka-compatible broker (Redpanda) streaming to a consumer vs. direct HTTP POST batched ingest.
-3.  **What AI suggested:** Initially suggested the Kafka-compatible broker design for scalability, and later the simpler ingest path based on requirements.
-4.  **What I chose:** Direct HTTP POST to an idempotent API endpoint (broker dropped).
-5.  **Why I agreed/disagreed:** I disagreed with the initial broker suggestion. Introducing a message broker for a single producer-consumer pair adds unnecessary infrastructure overhead and failure modes. An idempotent HTTP ingest provides the necessary reliability with significantly less operational complexity. As the problem statement says that e2e reliability >> more services and addition of more services introduces more chaces of failure
+## Limitations & Future Work
 
-# Limitations and Future Work
-
-1.  **CPU Bottleneck at Scale:** The computer vision pipeline is currently CPU-bound. Deploying to 40+ stores will require replacing the CPU PyTorch base with a CUDA-enabled image and migrating inference to edge GPUs.
-2.  **Cross-Camera Identity:** Motion-based association (tracklet stitching) now resolves the dominant *within-camera* over-split, but *cross-camera* de-duplication still relies on appearance Re-ID, which is unreliable on overhead views — a roaming staff member can be counted once per camera. The immediate next step is to extend motion association across cameras via a floor-plane homography (a shared coordinate space), rather than a heavier appearance model, which is measurably non-discriminative on this footage. Separately, tightly-packed groups (2–4 people) can still be merged into one detection box — a detection-level limit, addressed by pose/part-based detection rather than tracking.
-3.  **Synchronous Ingestion:** The current API processes ingest POSTs synchronously. For high-throughput live deployments across multiple stores, decoupling ingestion via an in-memory queue or message broker will prevent slow database writes from blocking the upstream CV pipeline.
+- **CPU-bound at scale:** 40+ stores need a CUDA image and edge GPUs.
+- **Cross-camera identity:** within-camera over-split is fixed by motion, but cross-camera de-dup still leans on appearance (a roaming staffer is counted per camera). A homography fix is infeasible *here* — Store_2's cameras don't overlap and were recorded on different days, so a merge would fabricate identities. Documented, not forced; impact stays within the accepted ±1–2.
+- **Tightly-packed groups:** YOLO merges front-to-back groups into one box (Store_2 ~17–18 vs 22). The pose splitter gave no net gain on this footage (groups are *tall*, not *wide*; pose degrades under occlusion) — kept as an honest, off-by-default negative result. Closing it needs a top-view-tuned detector or a better angle.
+- **Synchronous ingest:** a queue or broker would stop slow DB writes from blocking the pipeline under live multi-store load.

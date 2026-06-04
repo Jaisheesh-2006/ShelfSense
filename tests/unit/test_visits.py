@@ -11,6 +11,9 @@
 #   - Tests: same (camera,track) is cached (one resolve); matching signatures on different cameras
 #     -> same global id (dedup); distinct signatures -> distinct ids; session_seq per visitor;
 #     is_resolved flips after first resolve.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the gallery-backed VisitorRegistry."""
 
 import itertools

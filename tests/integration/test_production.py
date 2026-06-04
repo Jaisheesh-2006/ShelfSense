@@ -11,6 +11,9 @@
 #   on the real rendered JSON (captured from stdout) so contextvars-bound fields are included;
 #   simulate DB-down by making a repository call raise OperationalError.
 # Output: pytest tests using the shared `client` fixture (tests/integration/conftest.py).
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

@@ -1,244 +1,215 @@
-You are a Principal Architect and Staff+ Software Engineer who has reviewed hundreds of system design documents and engineering hiring submissions.
+Before submitting, I'd do a final pass using the challenge acceptance gate and scoring rubric, not your local checklist.
 
-I have already written a CHOICES.md document for a retail CCTV analytics system. The document contains good technical content, but it is too long, too detailed in places, and does not sufficiently emphasize the exact decisions that the challenge rubric scores.
+# 🚨 Acceptance Gate (Must Pass)
 
-Your task is to rewrite and improve the CHOICES.md.
+These are non-negotiable. If any fail, scoring may not happen.
 
-Important context:
+### Startup
 
-The challenge explicitly asks for:
+- [ ] Fresh clone works
+- [ ] `docker compose up` works on clean machine
+- [ ] No manual setup steps
+- [ ] No missing environment variables required for default run
 
-1. Detection Model Choice
-2. Event Schema Design Rationale
-3. One API Architecture Choice
+### API
 
-For each decision they expect:
+- [ ] `POST /events/ingest` works
+- [ ] `GET /stores/STORE_BLR_002/metrics` returns valid JSON
+- [ ] `/health` works
 
-* Options considered
-* What AI suggested
-* What I chose
-* Why I chose it
+### Documentation
 
-The challenge also rewards:
-
-* Demonstrating engineering judgment
-* Showing where AI recommendations were accepted or rejected
-* Clear trade-off analysis
-* Production thinking
-* Ability to defend the decision during follow-up interviews
-
-Goals:
-
-* Make the document read like it was written by a strong engineer who built the system.
-* Reduce unnecessary storytelling and dataset-specific details.
-* Keep only details that support engineering decisions.
-* Highlight business impact, operational simplicity, scalability, and correctness.
-* Make the document easy for a reviewer to skim.
-* Preserve technical depth.
-* Every decision should be defensible in a follow-up interview.
-
-Required structure:
-
-# CHOICES.md
-
-## Overview
-
-One short paragraph explaining that the document focuses on the most important engineering decisions and the trade-offs behind them.
+- [ ] README exists
+- [ ] DESIGN.md >250 words
+- [ ] CHOICES.md >250 words
 
 ---
 
-# Core Decisions (Highest Priority)
+# 🎯 Detection Layer
 
-These must appear first because they directly map to the challenge rubric.
+### Event Schema
 
-## Decision 1: Detection Model Selection
+- [ ] All required fields emitted
+- [ ] `event_id` globally unique
+- [ ] ISO timestamps
+- [ ] confidence always populated
+- [ ] is_staff populated
 
-Include:
+### Event Types
 
-### Problem
+- [ ] ENTRY
+- [ ] EXIT
+- [ ] ZONE_ENTER
+- [ ] ZONE_EXIT
+- [ ] ZONE_DWELL
+- [ ] BILLING_QUEUE_JOIN
+- [ ] BILLING_QUEUE_ABANDON
+- [ ] REENTRY
 
-What challenge the detector must solve.
+Even if some are rare, verify code paths exist.
 
-### Options Considered
+### Edge Cases
 
-YOLOv8, RT-DETR, YOLOv11 (or actual models considered).
-
-### What AI Suggested
-
-### Final Decision
-
-### Why
-
-### Trade-offs Accepted
-
-### When I Would Revisit This Decision
-
-Include a concise comparison table if possible.
-
----
-
-## Decision 2: Event Schema Design
-
-Include:
-
-### Problem
-
-### Options Considered
-
-* Raw detections
-* Track-level events
-* Behavioral event stream
-
-### What AI Suggested
-
-### Final Decision
-
-### Why
-
-### Trade-offs Accepted
-
-### When I Would Revisit This Decision
-
-Emphasize:
-
-* Replayability
-* Decoupling
-* Metrics computation
-* Funnel generation
-* Future scalability
+- [ ] Group entry handled
+- [ ] Staff excluded
+- [ ] Re-entry logic documented
+- [ ] Partial occlusion handled gracefully
+- [ ] Empty store doesn't break metrics
+- [ ] Camera overlap doesn't obviously double count
 
 ---
 
-## Decision 3: API / Ingestion Architecture
+# 🎯 API Endpoints
 
-Include:
+### Ingest
 
-### Problem
+- [ ] Idempotent by event_id
+- [ ] Duplicate replay safe
+- [ ] Batch >500 rejected correctly
+- [ ] Partial success works
 
-### Options Considered
+### Metrics
 
-* Kafka/Redpanda
-* Direct HTTP ingestion
+- [ ] Unique visitors
+- [ ] Conversion rate
+- [ ] Avg dwell
+- [ ] Queue depth
+- [ ] Abandonment rate
 
-### What AI Suggested
+### Funnel
 
-### Final Decision
+- [ ] Entry → Zone → Billing → Purchase
+- [ ] Re-entries don't double count visitors
 
-### Why
+### Heatmap
 
-### Trade-offs Accepted
+- [ ] Visit frequency
+- [ ] Avg dwell
+- [ ] data_confidence flag
 
-### When I Would Revisit This Decision
+### Anomalies
 
-Emphasize:
+- [ ] Queue spike
+- [ ] Conversion drop
+- [ ] Dead zone
 
-* Simplicity
-* Reviewer experience
-* Idempotency
-* Operational burden
-* Scaling path
+### Health
 
----
-
-# Additional High-Impact Decisions
-
-Only include the strongest decisions from the original document.
-
-Recommended:
-
-## Decision 4: Staff Identification Strategy and Zone classification *(VLM-Assisted Classification)
-
-Focus on:
-
-* Presence heuristic vs appearance-based classification
-* Why protecting conversion accuracy mattered
-
-* Why a VLM was introduced
-* Benefits observed
-* Limitations observed
-* Why it is disabled by default
-* Why it remains valuable
-
-Must include explicit evaluation:
-
-* What worked
-* What did not work
-* When it should be used
+- [ ] Last event timestamp
+- [ ] Feed status
 
 ---
 
-## Decision 6: Multi-Store Architecture
+# 🎯 Production Readiness
 
-Focus on:
+### Logging
 
-* Extensibility
-* Config-driven onboarding
-* Why store-specific logic was isolated
+- [ ] trace_id
+- [ ] endpoint
+- [ ] latency_ms
+- [ ] status_code
+- [ ] event_count on ingest
+
+### Error Handling
+
+- [ ] DB unavailable → 503
+- [ ] No stack traces exposed
+
+### Tests
+
+- [ ] > 70% coverage
+- [ ] Empty store test
+- [ ] All staff test
+- [ ] Zero purchase test
+- [ ] Re-entry test
+- [ ] Ingest idempotency test
 
 ---
 
-Rewriting Rules:
+# 🎯 AI Engineering (Easy Points)
 
-1. Remove excessive dataset-specific observations.
-   Do not spend paragraphs discussing:
+### Test Files
 
-* exact clip lengths
-* exact customer counts
-* exact staff counts
-* specific videos
+- [ ] Every test file has
 
-Only keep such details if they directly justify a design decision.
+```python
+# PROMPT:
+# CHANGES MADE:
+```
 
-2. Every decision must fit this pattern:
+header.
 
-Problem
-Options
-AI Suggestion
-Decision
-Why
-Trade-off
-Future Revisit
+### DESIGN.md
 
-3. Eliminate defensive explanations.
+- [ ] AI-Assisted Decisions section exists
 
-Avoid:
-"We did this because the reviewer..."
-"We didn't want to fail the gate..."
+### CHOICES.md
 
-Instead explain:
-Operational simplicity
-Reliability
-Maintainability
-Scalability
+Strongly highlight:
 
-4. Highlight disagreement with AI.
+- [ ] Detection model choice
+- [ ] Event schema choice
+- [ ] API architecture choice
 
-Reviewers want evidence that I used AI as an advisor rather than blindly following it.
+For each:
 
-5. Strengthen engineering reasoning.
+- [ ] Options considered
+- [ ] AI suggestion
+- [ ] Final choice
+- [ ] Why
 
-Explain:
+Exactly what rubric asks.
 
-* What alternative existed
-* Why it was rejected
-* What limitation was accepted
+---
 
-6. Write in the style of:
+# 🎯 Reviewer Experience (Most Important)
 
-* Amazon Principal Engineer
-* Staff Engineer architecture review
-* Engineering RFC
+### Startup
 
-Avoid:
+Ideal:
 
-* marketing language
-* AI-generated filler
-* buzzwords without justification
+```bash
+docker compose up
+```
 
-Target length:
-1200–1800 words.
+within 30–60 seconds:
 
-Output:
-Return only the rewritten CHOICES.md in markdown.
-Do not explain your edits.
-Do not provide commentary.
+- [ ] API running
+- [ ] Dashboard visible
+- [ ] Metrics populated
+- [ ] No waiting 20–30 minutes
+
+### Dashboard
+
+- [ ] Looks alive immediately
+- [ ] Metrics update
+- [ ] Not empty
+- [ ] No broken charts
+
+### README
+
+Reviewer should be able to understand:
+
+- [ ] How to run
+- [ ] How to test
+- [ ] How to run full detector
+- [ ] How replay mode works
+
+within 2 minutes.
+
+---
+
+# Final Question
+
+Before submission, ask yourself:
+
+> If a reviewer gives my project exactly 5 minutes, will they see something impressive?
+
+If the answer is:
+
+- dashboard loads immediately,
+- metrics appear,
+- API works,
+- docs are clear,
+
+then you're in a much stronger position than a technically perfect solution that requires 30 minutes before showing any output.

@@ -1,3 +1,11 @@
+# PROMPT
+# Task: Provide the integration-test fixtures — a FastAPI TestClient over a throwaway SQLite DB.
+# Context: the integration suites exercise the real API + repository hermetically (no Postgres/net).
+# Constraints: per-session DB, torn down after the run; no live services or network.
+# Output: a `client` fixture the integration tests import.
+# CHANGES MADE:
+#   - Added the shared TestClient/SQLite fixtures used by the integration suites.
+
 """Integration-test fixtures: a TestClient backed by a throwaway SQLite database.
 
 Hermetic — no Postgres/POS file required. We rebind the API's engine to a per-test SQLite file

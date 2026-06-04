@@ -34,8 +34,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && pip install opencv-python-headless
 
 # Pre-bake the YOLO weights into the image so there's no model download at runtime
-# (keeps `docker compose up` working offline / reliably — acceptance-gate friendly).
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# (keeps `docker compose up` working offline / reliably — acceptance-gate friendly). The pose model
+# is for the opt-in group-splitter (ADR-0038); baked too so GROUP_SPLIT=pose stays offline.
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); YOLO('yolov8n-pose.pt')"
 
 COPY services/detector/app ./app
 

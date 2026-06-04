@@ -230,4 +230,36 @@ I tested the appearance hypothesis directly: I built the learned embedder and me
 Motion association cannot span non-overlapping cameras without a shared coordinate space, and it does not fix group-merge (2–4 people detected as one box, a detection-level limit). I accepted both as documented limitations rather than over-fitting.
 
 ### When I Would Revisit This Decision
-To also fix cross-camera identity, I would add a floor-plane homography so each camera's coordinates map to a common store map, letting the same motion association work across overlapping views — a far better investment than a heavier appearance model that the data shows would not generalize.
+To also fix cross-camera identity, the right tool is a floor-plane homography so each camera's coordinates map to a common store map, letting the same motion association work across overlapping views — a far better investment than a heavier appearance model that the data shows would not generalize. On *this* dataset, however, that homography is itself blocked (the cameras don't overlap and weren't recorded simultaneously) — see Decision 9.
+
+---
+
+## Decision 9: Closing the Two Residual Counting Errors (Group-Merge vs. Cross-Camera)
+
+### Problem
+After motion association (Decision 8) fixed the dominant within-camera over-split, two residual counting errors remained on the busy store (Store_2; ground truth 22 customers + 3 staff): customers were **under-counted** (17 vs 22) and staff were **over-counted** (5 vs 3). They have opposite signs and, critically, *different root causes* — so treating them identically would be wrong.
+
+### Options Considered
+* **Group-merge (under-count):** raise YOLO resolution; add a pose model to split merged boxes; a geometric width-ratio heuristic; or accept the limit.
+* **Cross-camera (over-count):** a floor-plane homography to merge identities across cameras; an appearance/timing heuristic; or skip and document.
+
+### What AI Suggested
+For group-merge, the AI's principled lever was a body (pose) model. For cross-camera, the AI was asked to "just implement it" — but, reading the data first, it surfaced that the obvious homography fix is **blocked by this dataset** (the cameras are non-overlapping and were recorded on different days, so the timestamps aren't truly synchronized), meaning a spatio-temporal merge would fabricate identities.
+
+### Final Decision
+Two different calls, each matched to the root cause:
+* **Group-merge → an opt-in, pose-based splitter** (`GROUP_SPLIT=pose`), off by default — a second YOLOv8-pose model counts skeletons inside a wide box and splits it into one sub-track per person.
+* **Cross-camera identity → do NOT implement on this dataset**; document it as a dataset limitation.
+
+### Why
+Group-merge is a *detection* problem whose output genuinely varies with the input — a pose model can separate packed bodies, and keeping it off by default means the acceptance gate never loads a second model. Cross-camera duplication, by contrast, is **unfixable on this footage**: with no camera overlap and no real time-synchronization (different recording days collapsed to a synthetic timeline), a spatio-temporal merge would link *different* people who merely share a synthetic timestamp — fabricating identities and tripping the integrity cap, not improving accuracy. Its only symptom is the staff over-count (+2), which sits inside the accepted ±1–2 margin. Refusing to build something the data cannot support — and saying so plainly — is the more senior engineering call than shipping a homography that invents merges.
+
+### Explicit Evaluation
+* **Pose split — measured (clean A/B, 2026-06-04):** **no net gain** — Store_2 unique held at 22→22 (the ±1 customer/staff move is classification noise, since the total is unchanged). A frame probe showed why: overhead groups are front-to-back, so only ~5% of person-boxes are *wide* enough to trip the splitter's gate, and pose keypoints degrade under occlusion anyway. So it is **kept as a tested, off-by-default capability**, documented as an honest negative on this footage — not shipped as an active fix.
+* **Cross-camera:** the feasibility investigation *is* the deliverable — the engineering judgment to not chase an impossible-on-this-data merge is the value, not lines of code.
+
+### Trade-offs Accepted
+On this footage the customer count does **not** actually improve (the splitter is a measured negative here — overhead occlusion defeats pose just as it defeated higher resolution), and the staff over-count remains (within tolerance, by the user's call). Both are documented in DESIGN.md, never hidden — the value is the rigorous attempt-and-measure, not a number we couldn't honestly earn.
+
+### When I Would Revisit This Decision
+**Group-merge:** a part-based or top-view-tuned detector when GPU budget allows. **Cross-camera:** only with genuinely time-synchronized, *overlapping* multi-camera footage — at which point a floor-plane homography would extend the Decision-8 motion association across views and resolve the staff duplication too.

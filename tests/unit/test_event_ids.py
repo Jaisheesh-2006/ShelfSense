@@ -7,6 +7,9 @@
 # Constraints: pure/deterministic, no network; cover same-identity-same-id, different-identity-
 #   different-id, supplied-id-preserved, and sequential visitor ids.
 # Output: pytest tests.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

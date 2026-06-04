@@ -63,7 +63,7 @@ returning shopper produces `REENTRY` under the **same** `visitor_id` —
 never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the conversion denominator). See
 [[EDGE_CASES]], [[BUSINESS_RULES]].
 
-## The provided `sample_events.jsonl` (richer — the open decision)
+## The provided `sample_events.jsonl` (richer — informational only; not adopted)
 
 The corrected dataset ships 13 example events ([[GROUND_TRUTH]] §5) from a sample store (`store_1076`,
 Mumbai) "to help you validate your detection layer." Its schema **differs from the flat one above** and is

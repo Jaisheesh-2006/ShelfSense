@@ -11,6 +11,9 @@
 # Output:
 #   - Tests: ENTER only after min dwell; brief track -> no events; ZONE_DWELL on interval ticks;
 #     ZONE_EXIT after grace with correct total dwell_ms; flush emits EXIT for an active visitor.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the ZoneTracker presence/dwell state machine."""
 
 from app.zone_tracker import ZoneTracker

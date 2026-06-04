@@ -11,6 +11,9 @@
 # Output:
 #   - Tests: fraction for a full / half / zero box; empty frame → 0; gate disabled when min_frac<=0;
 #     gate passes a large box and rejects a tiny one at a realistic threshold.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the detection-quality size gate."""
 
 from __future__ import annotations

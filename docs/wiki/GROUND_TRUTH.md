@@ -110,10 +110,20 @@ set: **two entry cameras** plus a floor and a billing view.
     roaming staffer seen on ENTRY2+ZONE+BILLING is minted per camera; cross-camera dedup still leans on the
     measured-ambiguous appearance Re-ID). Per-camera identity quality is now materially cleaner; the honest
     store-wide output is still a **head-count band + per-camera figures**.
-  - **What would firm it up further (deferred, ADR-0037 alt-c):** a floor-plane **homography** so motion
-    association works *across* cameras too (the only thing that fixes the cross-camera staff duplication);
-    appearance embeddings won't help (measured-ambiguous, ADR-0036). Proof images:
-    `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`, `data/crops/montage_*.jpg`.
+  - **The two residual errors were each addressed on their merits (2026-06-04):**
+    - **Group-merge (customers 17 vs 22):** an opt-in **pose splitter** (`GROUP_SPLIT="pose"`, YOLOv8-pose
+      splits a wide merged box per skeleton; ADR-0038) was built and **A/B-measured → no net gain** (Store_2
+      unique 22→22). A frame probe shows why: overhead groups stand **front-to-back**, so a merged pair is a
+      *tall* box (median `w/h` 0.33; only ~5% exceed the width gate), and pose keypoints degrade under
+      occlusion — the **same limit** that made imgsz-960 useless. Kept as a tested, off-by-default capability;
+      the gap stays a documented overhead-CCTV detection limit.
+    - **Cross-camera staff duplication (staff 5 vs 3):** the textbook fix — a floor-plane **homography** so
+      motion association spans cameras — is **not feasible on this dataset (ADR-0039):** Store_2's cams are
+      non-overlapping AND recorded on different real days (no true time-sync), so a spatio-temporal merge
+      would *fabricate* identities (integrity risk). Appearance won't help either (measured-ambiguous,
+      ADR-0036). Decided to **skip + document**; its only effect (staff +2) is within the accepted ±1–2.
+    Proof images: `docs/wiki/frames/store2_entrance_lines.jpg`, `store2_customers_staff.jpg`,
+    `data/crops/montage_*.jpg`.
 - **Anonymisation (PDF §3.2):** full-face blur on every frame, store branding masked, no audio. Faces are
   unusable → Re-ID must be appearance/trajectory-based (which ours is), and any gender/age signal in
   `sample_events.jsonl` (§5) cannot come from clear faces.
@@ -227,10 +237,10 @@ schema**. Three observed shapes:
   `queue_served_ts`(null if abandoned), `queue_exit_ts`, `wait_seconds`, `queue_position_at_join`,
   `abandoned`**, hotspot, demographics.
 
-→ **Open tension (do not silently pick one):** the PDF's page-5 schema (what we built and what the *gate
-example* uses) vs. the provided sample (richer: demographics, groups, zone metadata, queue analytics,
-hotspots). Whether to keep the flat schema, adopt the sample's, or **enrich ours toward it** is a pending
-design decision — see [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0024.
+→ **Decided (ADR-0024 D1 — keep the flat schema):** the PDF's page-5 schema (what we built and what the
+*gate example* uses) is the emitted/ingested contract; the provided sample (richer: demographics, groups,
+zone metadata, queue analytics, hotspots) is **informational only** — it is internally inconsistent and from
+a different sample store, so we document it but do not adopt it. See [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0024.
 
 ## What this implies for us (carried into the rest of the wiki)
 

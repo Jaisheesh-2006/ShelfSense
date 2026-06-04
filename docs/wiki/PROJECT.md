@@ -9,7 +9,7 @@ via a two-tier pipeline: a detection layer that emits behavioural events, and an
 and serves metrics.
 
 ## Problem statement
-Purplle / UpGrad Store Intelligence Challenge (2026). Start from **raw CCTV footage** + a **POS CSV**
+Purplle Store Intelligence Challenge. Start from **raw CCTV footage** + a **POS CSV**
 and build a complete, containerised system that produces meaningful, queryable store metrics. Graded
 as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on detection accuracy.
 
@@ -20,8 +20,8 @@ as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on de
   - **Store_2** (NEW): `entry 1`, `entry 2`, `zone`, `billing_area`; 960×1080, 25 fps, ~1.5–2-min.
 - **POS sample CSV** — 7-col, store **ST1008** only (Store_1), 10-Apr-2026, **24 transactions** (₹34,331.71)
   — the conversion source. Different format from the old CSV (`pos_loader.py` needs rework).
-- **`sample_events.jsonl`** — 13 example events in a **richer schema** than the PDF's page-5 one (open
-  decision, [[EVENT_SCHEMA]], ADR-0024).
+- **`sample_events.jsonl`** — 13 example events in a **richer schema** than the PDF's page-5 one;
+  **informational only — we keep the flat page-5 schema** (ADR-0024 D1, [[EVENT_SCHEMA]]).
 
 ## Target outputs
 - **Conversion rate** (North Star) = `converted visitors ÷ unique visitors` (POS 5-min billing-window
@@ -60,11 +60,12 @@ as an **end-to-end systems & engineering** problem ([[SPEC]] scoring), not on de
 - **A4:** staff are classified (`is_staff`) and excluded (Store_1: black-uniform signal, ADR-0009). The
   stockroom cam no longer exists in the data.
 
-## Open questions (post-dataset-change — for discussion before code, ADR-0024)
-- **Event schema:** keep the flat PDF page-5 schema (what we emit), adopt `sample_events.jsonl`'s richer
-  schema, or enrich ours toward it (demographics, groups, zone metadata, queue analytics)? ([[EVENT_SCHEMA]])
-- **Second store:** process Store_2 and tag events with a distinct `store_id`? (API is already per-store.)
-- **POS loader:** rework `pos_loader.py` for the new 7-col CSV (transaction = distinct `order_time`).
-- **Demographics from blurred faces:** the PDF says full-face blur; can/should we emit gender/age at all?
+## Resolved decisions (post-dataset-change, ADR-0024)
+- **Event schema — DECIDED:** keep the flat PDF page-5 schema (what we emit); `sample_events.jsonl`'s richer
+  signals are **informational only, not adopted** (ADR-0024 D1, [[EVENT_SCHEMA]]).
+- **Second store — DONE:** Store_2 is processed as **ST1009** via the pluggable store registry (ADR-0028).
+- **POS loader — DONE:** reworked for the 7-col CSV (transaction = distinct `order_time`; ADR-0024 D3).
+- **Demographics from blurred faces — DEFERRED:** full-face blur makes gender/age low-integrity; default is
+  **not to emit** (ADR-0024 D4). Revisit only if a defensible signal exists.
 
 See [[DECISIONS]] for the decision log and [[RISKS]] for tracked unknowns.

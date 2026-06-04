@@ -10,7 +10,7 @@
 
 **ShelfSense** is a **Store Intelligence System** that turns raw retail **CCTV footage** into
 business metrics — headline metric: **store conversion rate**. It is the submission for the
-**UpGrad / Purplle Store Intelligence Challenge (April 2026)**, graded as an **end-to-end
+**Purplle Store Intelligence Challenge**, graded as an **end-to-end
 systems & engineering problem**, not an ML-accuracy problem.
 
 - **Store:** Purplle "Brigade_Bangalore" (store_id `ST1008`), data from **10-Apr-2026**.

@@ -77,6 +77,18 @@ To re-run the full YOLO + ByteTrack detection over CCTV clips:
    `GEMINI_API_KEY=...`). The VLM is **optional** — with it off the pipeline uses the per-store
    uniform-colour staff heuristic, so `docker compose up` never needs a key or network.
 
+### Run the tests
+
+```bash
+pip install ./services/common -r services/api/requirements.txt \
+            -r services/detector/requirements.txt -r requirements-dev.txt
+pytest          # 171 tests; enforces ≥70% coverage (SPEC Part C) — currently 84%
+```
+
+The unit + integration suites (edge cases, ingest idempotency, end-to-end event replay) run
+**hermetically** — no Docker, Postgres, or network required (the API tests use SQLite via FastAPI's
+`TestClient`). CI runs the same `ruff` + `pytest` gates on every push (`.github/workflows/ci.yml`).
+
 ### Tips for reviewers
 
 - **Give Docker ~8 CPUs / 10 GB.** Docker Desktop → **Settings → Resources**.
@@ -85,6 +97,13 @@ To re-run the full YOLO + ByteTrack detection over CCTV clips:
   to see exactly what the pipeline emitted.
 
 ---
+
+## Deploy (free)
+
+To host the live demo for free, see **[DEPLOY.md](DEPLOY.md)**. The short version: the default
+replay stack is light (no GPU/models), so the simplest path is a **free always-on VM** (e.g. Oracle
+Cloud Always Free) running `docker compose up -d --build` with ports **8080** (dashboard) and **8000**
+(API) open — zero code changes. A managed-PaaS path (Render/Railway/Fly) is also covered.
 
 ## Data (not included in this repo)
 

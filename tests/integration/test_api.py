@@ -6,6 +6,9 @@
 # Constraints: hermetic (SQLite tmp DB, no Postgres/POS); deterministic; assert the response
 #   contracts (counts, error envelope) and the no-double-count guarantee on re-POST.
 # Output: pytest tests using the `client` fixture (tests/integration/conftest.py).
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

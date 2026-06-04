@@ -14,6 +14,9 @@
 # Output:
 #   - Tests: identity pass-through; mint + reuse; velocity-predicted stitch; far jump -> new; long
 #     gap -> new; a near-but-still-live track is NOT stolen (coexistence); factory selection.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for spatio-temporal tracklet stitching (track association)."""
 
 from __future__ import annotations

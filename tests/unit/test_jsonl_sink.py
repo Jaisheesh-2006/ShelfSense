@@ -10,6 +10,9 @@
 # Output:
 #   - Tests: two events produce two valid JSON lines preserving event_type/visitor_id; the sink
 #     creates a missing parent directory; appending reopens and adds without truncating.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for JsonlEventSink."""
 
 import json

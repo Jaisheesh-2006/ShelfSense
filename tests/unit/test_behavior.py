@@ -11,6 +11,9 @@
 #   - Tests: ENTRY rejects a zone_id but allows None; ZONE_DWELL keeps its zone; naive timestamp is
 #     rejected; an offset datetime is converted to UTC; out-of-range confidence is rejected;
 #     model_dump_json round-trips the enum value and a UTC timestamp.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the prescribed BehaviorEvent schema rules."""
 
 from datetime import UTC, datetime, timedelta, timezone

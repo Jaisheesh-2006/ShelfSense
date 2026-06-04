@@ -53,10 +53,11 @@ def _to_dt(ms: int) -> datetime:
 def health() -> HealthResponse:
     """Operational health: per-store feed freshness + `STALE_FEED`.
 
-    Freshness is **recording-relative** by default — measured against the latest ingested event, so
-    a replayed historical clip reads healthy. Set `HEALTH_STRICT_NOW=true` to compare against real
-    wall-clock time (the right behaviour for a live feed). `status` is `degraded` if the DB is
-    unreachable or any store's feed is stale.
+    Freshness is **recording-relative** by default — each store is measured against **its own**
+    latest ingested event, so a replayed historical clip (of any length) reads healthy and a shorter
+    clip isn't falsely flagged against a longer one. Set `HEALTH_STRICT_NOW=true` to compare against
+    real wall-clock time (the right behaviour for a live feed, where STALE_FEED is the on-call
+    signal). `status` is `degraded` if the DB is unreachable or any store's feed is stale.
     """
     settings = get_settings()
     db_ok = ping_db()
@@ -68,12 +69,20 @@ def health() -> HealthResponse:
         db_ok = False
 
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    # `reference_at` shown to the caller: real wall-clock now (strict) or the latest event ingested
+    # across all stores (recording-relative — so an old replayed clip reads healthy).
     reference_ms = now_ms if settings.health_strict_now else max(by_store.values(), default=now_ms)
 
     stores: list[StoreHealth] = []
     any_stale = False
     for store_id, last_ms in sorted(by_store.items()):
-        fs = feed_status(last_ms, reference_ms, settings.health_stale_feed_minutes)
+        # Per-store freshness. In recording-relative mode a fully-replayed clip is *complete*, not
+        # stale, so each store is measured against ITS OWN latest event — otherwise a store whose
+        # clip simply ends earlier than another's (different clip lengths/start times) would be
+        # falsely flagged STALE_FEED against a global reference. STALE_FEED is a live-ops signal, so
+        # it fires only in strict mode (against real wall-clock).
+        store_reference_ms = now_ms if settings.health_strict_now else last_ms
+        fs = feed_status(last_ms, store_reference_ms, settings.health_stale_feed_minutes)
         any_stale = any_stale or fs.stale_feed
         stores.append(
             StoreHealth(

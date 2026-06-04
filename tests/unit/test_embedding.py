@@ -7,6 +7,9 @@
 #   (reid.py). The "histogram" / unsupported paths must not import torch.
 # Constraints: no torch on the tested path; fake settings (SimpleNamespace) + a null logger.
 # Output: pytest asserting None for the default histogram backend and any unsupported backend.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 
 from __future__ import annotations
 

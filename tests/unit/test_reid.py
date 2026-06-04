@@ -11,6 +11,9 @@
 # Output:
 #   - Tests: distance identical=0 / orthogonal=1; new signature mints; a near signature merges to
 #     the same id; a far signature mints a new id; a re-match after the gap is flagged is_reentry.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the appearance Re-ID matching logic."""
 
 import itertools

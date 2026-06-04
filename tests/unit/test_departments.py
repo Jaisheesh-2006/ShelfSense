@@ -9,6 +9,9 @@
 #     the map only emits known department constants.
 # Output:
 #   - Tests below.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the brand -> department taxonomy (ADR-0025)."""
 
 from shelfsense_common.departments import (

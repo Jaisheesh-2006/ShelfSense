@@ -12,6 +12,9 @@
 #     and includes both; DEFAULT_STORE_ID resolves; ST1008 has CAM3 entrance + CAM5 floor mask with
 #     corrected filenames; ST1009 has two entrances + a product + a billing cam, its own clips_dir,
 #     and a pinned synthetic clip_start; every camera carries a usable file + zone.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the pluggable multi-store registry."""
 
 from __future__ import annotations

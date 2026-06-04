@@ -43,6 +43,7 @@ from app.crossing import CrossingDetector
 from app.embedding import build_embedder
 from app.frames import VideoFrameSource
 from app.gating import passes_size_gate
+from app.group_split import build_splitter
 from app.reid import SIGNATURE_LEN, ReIDGallery, appearance_signature
 from app.staff import StaffClassifier, measure_uniform_color
 from app.staff_decider import StaffDecider
@@ -69,6 +70,7 @@ def process_camera(
     emitted_visitors: set[str],
     exited_visitors: set[str],
     embedder,
+    splitter,
     zone_override: str | None = None,
 ) -> dict[str, int]:
     """Track one camera; emit zone + entrance + reentry events with global (Re-ID'd) visitor ids."""
@@ -247,7 +249,10 @@ def process_camera(
         log.info("associator_open", camera=camera.camera_id, kind=type(associator).__name__)
         for frame in src.frames():
             last_ts = frame.ts_ms
-            for track in tracker.update(frame.image):
+            # Pose group-split (ADR-0038, opt-in): a merged-group box is broken into one sub-track
+            # per skeleton BEFORE the gates/associator, so each packed shopper becomes its own
+            # foot-point. NoOpSplitter (default) returns the tracks unchanged — no model, gate-safe.
+            for track in splitter.split(frame.image, tracker.update(frame.image)):
                 fx, fy = track.foot_point
                 # Quality gate (ADR-0029): drop tiny far/reflection blobs entirely (mall pedestrians
                 # seen small through the storefront glass). Applies before counting AND crossing.
@@ -320,6 +325,7 @@ def process_store(
     vlm,
     vlm_cache,
     embedder,
+    splitter,
     settings: Settings,
     log,
     emitted_visitors: set[str],
@@ -415,6 +421,7 @@ def process_store(
             emitted_visitors,
             exited_visitors,
             embedder,
+            splitter,
             zone_override=zone_overrides.get(camera.camera_id),
         )
         for key, value in counts.items():
@@ -477,6 +484,10 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     # colour histogram. Built once and shared (stateless feature extraction) across all stores.
     embedder = build_embedder(settings, log)
 
+    # Optional pose group-splitter (ADR-0038). NoOpSplitter unless group_split="pose"; built once
+    # and shared (stateless inference). Splits merged-group boxes into per-skeleton sub-tracks.
+    splitter = build_splitter(settings, log)
+
     totals: dict[str, int] = {}
     emitted_visitors: set[str] = set()  # distinct (store, visitor) ids that produced an event
 
@@ -505,6 +516,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
                 vlm,
                 vlm_cache,
                 embedder,
+                splitter,
                 settings,
                 log,
                 emitted_visitors,

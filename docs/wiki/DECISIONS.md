@@ -382,6 +382,12 @@ What changes vs. our earlier design:
      event** (so a replayed clip reads healthy); `HEALTH_STRICT_NOW=true` switches to real wall-clock
      for live ops. `STALE_FEED` when lag > `health_stale_feed_minutes`. `status=degraded` if the DB is
      down or any feed is stale. (Validated: default → ok/not-stale; strict → degraded/stale.)
+     - **Refinement (2026-06-04):** recording-relative freshness is now **per-store** — each store is
+       measured against *its own* latest event, not a global max. The two stores' clips have different
+       end times (ST1008 ~14:42, ST1009 ~14:32 UTC); the old global reference flagged the
+       shorter-ending ST1009 as `STALE_FEED` (lag ~10 min) → spurious `degraded`. A fully-replayed clip
+       is *complete*, not stale, so per-store is the honest reading; `STALE_FEED` remains a live signal
+       in strict mode. (`routers/health.py`; health tests still green.)
 - **Alternatives:** (a) fabricate a 7-day average / fire dead-zone on the short clip — trips the
   integrity cap and reads as dishonest; (b) `/health` strict-only — always-red demo hurts the
   Production bucket; (c) drop the STALE_FEED verdict entirely — loses a spec signal. The chosen
@@ -671,8 +677,9 @@ What changes vs. our earlier design:
 ---
 
 ## ADR-0024 — Re-ground on the corrected dataset; schema + POS-loader decisions
-- **Date:** 2026-06-02 · **Status:** **Partially resolved** — D1 (schema) + D3 (POS loader) done; D2
-  (Store_2) + D4 (demographics) deferred by the user.
+- **Date:** 2026-06-02 · **Status:** **Resolved** — D1 (event schema) **closed: keep the flat page-5
+  schema; `sample_events.jsonl` is informational only**; D3 (POS loader) and D2 (Store_2 = ST1009, now
+  processed via ADR-0028) done. Only D4 (demographics) is deliberately deferred (full-face blur).
 - **Context:** The user flagged flaws in the original dataset (a single detailed Brigade store that didn't
   match the problem-statement PDF; no `sample_events.jsonl`). The team delivered a **corrected dataset**,
   now in `docs/raw/` (old files removed). [[GROUND_TRUTH]] was re-derived; this ADR records what changed and
@@ -702,8 +709,8 @@ What changes vs. our earlier design:
   - **(D3) POS loader rework — ✅ DONE (2026-06-02):** reworked for the 7-col CSV — basket = distinct
     `order_time`, value = Σ `total_amount`, `brand` replaces the gone `dep_name` (`department`→`brand`,
     `top_department`→`top_brand`), `invoice_number` dropped. See [[BUSINESS_RULES]], [[GROUND_TRUTH]] §2.
-  - **(D2) Second store — ⏳ PENDING (deferred by user):** process Store_2 and tag events with a distinct
-    `store_id` (API is already per-store), or document it out-of-scope.
+  - **(D2) Second store — ✅ DONE (ADR-0028):** Store_2 is processed end-to-end as **ST1009** via the
+    pluggable store registry; events are tagged per-store (the API was already per-store).
   - **(D4) Demographics/groups — ⏳ PENDING (deferred):** whether to produce gender/age/group signals given
     **full-face blur** in the footage (accuracy + integrity). Default per D1 is **no**.
 - **Alternatives considered for *this* ADR:** silently pick one schema and refactor (rejected — the conflict
@@ -711,8 +718,8 @@ What changes vs. our earlier design:
   — the sample is the provided validation aid and may reflect the held-out `assertions.py`).
 - **Consequences now:** the prior "validated" pipeline numbers (Store_1: unique 2, funnel 2→2→0→0) are **not
   invalidated as logic**. The **POS loader is now fixed (D3)** so conversion/day-KPIs read the new CSV again
-  (day total **₹34,331.71**). The full clean-machine gate dry-run should still be re-run once Store_2/detector
-  clip paths are settled (D2).
+  (day total **₹34,331.71**). The full clean-machine gate dry-run remains the open next action in [[STATE]]
+  (D2 is now settled).
 - **Rationale:** capture the corrected reality and the exact open decisions so the next working session (and
   the user) can choose deliberately, instead of drifting into a refactor.
 
@@ -1105,3 +1112,79 @@ Concretely: **every camera now runs a zone tracker** (the entrance cam too), so 
   cheap, deterministic, and testable; it does not address group-merge (detection) or cross-camera identity
   (needs geometry). The honest crowd output remains a **head-count band + per-camera figures**, but the
   per-camera identity quality is now materially cleaner ([[GROUND_TRUTH]] §1, [[EDGE_CASES]] #7/#9).
+
+---
+
+## ADR-0038 — Pose-based group splitting (the customer under-count fix), opt-in
+- **Date:** 2026-06-04 · **Status:** Accepted (opt-in `GROUP_SPLIT="pose"`, **off by default**); user-directed.
+- **Context:** ADR-0037's residual #1 — **customers under-counted (Store_2 17 vs 22)** — is **group-merge**:
+  YOLO draws **one** box around 2–4 tightly-packed shoppers on overhead views, so a group collapses into a
+  single track and the unique count deflates ([[EDGE_CASES]] #9). It is a *detection*-level limit, not a
+  tracking one — raising YOLO `imgsz` to 960 did **not** separate packed bodies (ADR-0037), only ran slower.
+  The user directed: *"implement a solution for group merge."*
+- **Decision:** add a pluggable **pose splitter** (`detector/app/group_split.py`). When `GROUP_SPLIT="pose"`,
+  run a second lightweight model — **YOLOv8-pose** — on frames that contain a *wide* person box (`w/h >=
+  group_split_min_aspect`; a lone standing person is tall), count the distinct skeletons that fall inside the
+  box, and split it into **one sub-track per skeleton** (deterministic id `parent*1000 + slot`, a vertical
+  slice of the box centred on each skeleton's foot so the sub-track's foot-point lands where that person
+  stands). It runs **before** the size gate / floor mask / motion associator, so each separated shopper flows
+  through the normal pipeline as its own foot-point and lifts the count toward the truth. Pose inference is
+  paid for **only** on frames that actually contain a wide box, bounding the extra CPU to crowded frames.
+- **Pluggable + gate-safe (like the VLM / embedder / associator):** `build_splitter` returns a `NoOpSplitter`
+  unless `GROUP_SPLIT="pose"`, so the replay gate **and** the default detect pass never load a second model.
+  The split DECISION (`split_track`) is a **pure** function of box geometry + skeleton positions, fully
+  unit-tested; only the pose inference touches torch, and it is injectable so `split` is tested torch-free.
+  The pose weights are **pre-baked** into the detector image so the opt-in stays offline (acceptance-gate
+  friendly). Split only fires at `>= group_split_min_people` skeletons inside, so a wide-but-single box (a
+  shopper bending / carrying a bag) is left untouched.
+- **Alternatives:** (a) higher YOLO `imgsz` — measured no gain (ADR-0037). (b) A geometric width-ratio
+  splitter (no second model) — cheap and pure, but brittle and prone to over-splitting; rejected for a
+  principled body model. (c) Crowd-density counting — yields a number, not the per-person events the funnel
+  needs. (d) Accept the limit and document it — rejected; the user asked to attack it, and a pluggable,
+  off-by-default attempt costs the gate nothing.
+- **Honest limit:** on heavy overhead occlusion pose keypoints are themselves unreliable, so this recovers
+  *some* packed pairs, not all — it is **measured and reported, never assumed** (cf. ADR-0037). Because it is
+  off by default, it can only ever *help* a deliberate offline accuracy pass; the committed gate events and
+  the reviewer's run are unaffected unless explicitly enabled.
+- **Measured effect (clean A/B, baseline vs `GROUP_SPLIT=pose`, both with the VLM, 2026-06-04):** **no net
+  gain.** Store_2 unique held at **22 → 22** (the customer/staff split shifted ±1, but the *unchanged total*
+  means that is VLM reclassification noise on different crops, not a newly-separated person); Store_1
+  unchanged (7 → 7, it has no packed groups). A frame probe of the ZONE clip shows **why**: overhead retail
+  groups stand **front-to-back**, so a merged pair is a *tall* box (sampled box `w/h` median **0.33**; only
+  **~5%** exceed the `0.85` width gate), not the side-by-side *wide* box the gate keys on — and where the
+  gate did fire, pose found one skeleton (occlusion) or the sub-tracks were Re-ID-merged back. This is the
+  **same fundamental limit** that defeated the imgsz-960 attempt (overhead occlusion). **Decision (user,
+  2026-06-04): keep it as a documented, tested, off-by-default capability** — it costs the gate nothing and
+  is ready for a less-occluded camera angle, but it is **an honest negative on this footage, not a fix.** The
+  committed gate events were reverted to the clean baseline (the +1 was noise).
+
+---
+
+## ADR-0039 — Cross-camera identity: not feasible on this dataset; skip + document (supersedes ADR-0037 alt-c)
+- **Date:** 2026-06-04 · **Status:** Accepted (decision: **do not implement on this data**; document the
+  limit) · user-directed after the feasibility finding below.
+- **Context:** ADR-0037's residual #2 — **staff over-counted (Store_2 5 vs 3)** — is **cross-camera
+  duplication**: a roaming staffer seen on ENTRY2+ZONE+BILLING is minted once *per camera* because motion
+  stitching is per-camera and cross-camera dedup leans on appearance (measured non-discriminative, ADR-0036).
+  ADR-0037 alt-(c) named a **floor-plane homography** as the natural next step. The user asked to *"implement
+  cross-camera identity."* Reading the data before building revealed two decisive blockers.
+- **Finding (decisive — why homography cannot work here):**
+  1. **No overlap.** Store_2's cameras are **non-overlapping** — two separate mall entrances + a zone + a
+     billing view, no shared field of view — so there is no common floor point visible in two cameras at once
+     to anchor a homography match.
+  2. **No real time-sync.** The clips were recorded on **different real days** (`entry 1`: 29-Mar, `entry 2`:
+     08-Mar — `stores/st1009.py`) and only collapsed onto **one synthetic** `clip_start`. A homography /
+     spatio-temporal cross-camera merge relies on *"same floor position at the same instant"*; with neither
+     overlap nor genuine synchronisation, it would link **different** people who happen to share a synthetic
+     timestamp — **fabricating identities**, which trips the integrity cap (input-invariant / non-real output).
+- **Decision:** **do not implement cross-camera identity on this dataset.** Document it as a dataset
+  limitation in [[GROUND_TRUTH]] / DESIGN. Reinforcing rationale: its only payoff here is the **staff
+  over-count (+2)**, which is within the **±1–2 the user accepts**; and the one cue that does not need sync —
+  appearance Re-ID — is measured non-discriminative on overhead CCTV (ADR-0036). Building a merge the data
+  cannot support would be wasted effort *and* an integrity risk, not an improvement.
+- **Supersedes:** ADR-0037 alternative (c). That entry framed the homography as *"deferred — the natural next
+  step"*; it is hereby reclassified from **deferred future work** to **not feasible on this dataset** (it
+  needs genuinely overlapping, time-synchronised cameras, which the delivered clips are not).
+- **What would unblock it (deployment capability, not a this-data task):** truly synchronised, overlapping
+  multi-camera footage; then a floor-plane homography lets the ADR-0037 motion association run *across* views
+  and would also resolve the cross-camera staff duplication. Parked as a future capability, honestly scoped.

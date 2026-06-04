@@ -15,6 +15,9 @@
 #     StaffDecider overrides when confident, falls back on low-confidence / no-crop / visitor=None /
 #     VLM error (and doesn't retry a failed visitor); build_vlm_client returns None when off/no-key;
 #     resolve_zones is empty without a VLM, only labels product cameras, honours a cached verdict.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the optional VLM staff/zone classification layer."""
 
 from __future__ import annotations

@@ -81,6 +81,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       VLM_MODEL: ${VLM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
       VLM_CACHE_PATH: /data/vlm/vlm_cache.json
+      # Optional pose group-split (ADR-0038): separate tightly-packed shoppers YOLO merges into one
+      # box. Off by default; set GROUP_SPLIT=pose for the offline accuracy pass. Only used when
+      # DETECTOR_MODE=detect.
+      GROUP_SPLIT: ${GROUP_SPLIT:-none}
     volumes:
       # CCTV clips — only needed when DETECTOR_MODE=detect. Mounted read-only.
       - "./docs/raw/Store_CCTV_Clips:/data/cctv:ro"

@@ -13,6 +13,9 @@
 #   - Tests: IST->UTC is correct & tz-aware; rows sharing order_time merge into one basket even with
 #     different order_ids; amount sums total_amount; line_items counts rows; dominant brand wins;
 #     result sorted by time; rows with a bad date are skipped.
+# CHANGES MADE:
+#   - Added this test module to cover the cases listed under Output above; pure
+#     assertions (no production behaviour changed by the test itself).
 """Unit tests for the POS sales CSV loader (IST->UTC + basket grouping by order_time)."""
 
 from datetime import UTC
