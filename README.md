@@ -7,6 +7,19 @@
 
 ---
 
+## 🚀 Live demo
+
+|               | URL                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dashboard** | **https://shelfsense-fronted.onrender.com**                                                                                                        |
+| **API**       | https://shelfsense-3ujc.onrender.com — [/health](https://shelfsense-3ujc.onrender.com/health) · [/docs](https://shelfsense-3ujc.onrender.com/docs) |
+
+> Hosted free on Render. The API **sleeps after ~15 min idle** — if the dashboard shows "Reconnecting",
+> open the [API `/health`](https://shelfsense-3ujc.onrender.com/health) once to wake it (~30–60 s), then refresh.
+> View the dashboard **without an ad blocker** (or in an incognito window) — blockers can stop the metric polls.
+
+---
+
 ## What it does
 
 ShelfSense watches a store's camera feeds and produces retail metrics:
@@ -91,37 +104,12 @@ The unit + integration suites (edge cases, ingest idempotency, end-to-end event 
 
 ### Tips for reviewers
 
-- **Give Docker ~8 CPUs / 10 GB.** Docker Desktop → **Settings → Resources**.
-- The **first `--build` is heavy** (YOLO/Torch downloaded once, then cached).
-- **Inspect the raw events:** open `data/events/behavior.jsonl` (newline-delimited JSON)
-  to see exactly what the pipeline emitted.
-
----
-
-## Deploy (free)
-
-To host the live demo for free, see **[DEPLOY.md](DEPLOY.md)**. The short version: the default
-replay stack is light (no GPU/models), so the simplest path is a **free always-on VM** (e.g. Oracle
-Cloud Always Free) running `docker compose up -d --build` with ports **8080** (dashboard) and **8000**
-(API) open — zero code changes. A managed-PaaS path (Render/Railway/Fly) is also covered.
-
-## Data (not included in this repo)
-
-The raw inputs live in `docs/raw/` and are **kept out of GitHub** on purpose — they contain
-customer personal data and large video files. To run with real data, place them locally:
-
-```
-docs/raw/
-├── Store_CCTV_Clips/
-│   ├── Store_1/Store 1/   CAM 1 - zone.mp4, CAM 2 - zone.mp4, CAM 3 - entry.mp4,
-│   │                      CAM 5 - billing.mp4, Store 1 - layout.png
-│   └── Store_2/Store 2/   entry 1.mp4, entry 2.mp4, zone.mp4,
-│                          billing_area.mp4, store 2 - layout.png
-├── POS - sample transactions*.csv        # 7-col POS sales (store ST1008 only)
-├── Purplle_Tech_Challenge_PS*.pdf        # problem statement
-├── Assessment  Evaluation Framework*.pdf  # grading rubric
-└── sample_events*.jsonl                   # 13 example events (reference schema)
-```
+- **The default `docker compose up` is light** — it replays committed events (no YOLO/Torch, no
+  detector build), so the dashboard fills in ~20 s on a normal laptop.
+- **The heavy build is opt-in:** only `docker compose --profile detect up --build` pulls YOLO/Torch
+  and runs detection over the clips — for that, give Docker ~8 CPUs / 10 GB and expect a longer first build.
+- **Inspect the events:** open `data/events/behavior.jsonl` (newline-delimited JSON) — the committed
+  replay artifact the API ingests (ST1008: 106 events · ST1009: 183), i.e. exactly what the detector emitted.
 
 ---
 
@@ -146,6 +134,22 @@ docker-compose.yml
 
 ## Documentation
 
+### How this was built — context engineering with an "LLM wiki"
+
+The project was developed with an AI pair-engineer using a deliberate **context-engineering**
+discipline: a self-maintained **LLM wiki** (the Karpathy pattern). Instead of an assistant
+re-deriving context every session, `docs/wiki/` is a **stateful, densely `[[cross-linked]]`
+knowledge base** that is the single source of truth — and the two graded deliverables are
+_generated from it_, not written once and left to rot:
+
+- **`GROUND_TRUTH.md`** — observed facts from the raw data; nothing else may contradict it.
+- **`DECISIONS.md`** — an ADR log (every choice with alternatives + trade-offs) → distilled into **`CHOICES.md`**.
+- **`ARCHITECTURE.md`** → **`DESIGN.md`**; **`STATE.md`** tracks the live build state; **`INTERVIEW_QA.md`** defends each slice.
+
+Every session **reads the wiki first and writes understanding back at the end**, so knowledge
+_compounds_ instead of resetting. The payoff: every decision is traceable, the reasoning behind each
+trade-off is recorded, and the reviewer-facing docs reflect a living source rather than a one-off.
+
 The full design lives in the **wiki** — start at [docs/wiki/README.md](docs/wiki/README.md):
 
 - [GROUND_TRUTH.md](docs/wiki/GROUND_TRUTH.md) — the facts about the data & store
@@ -156,12 +160,36 @@ The full design lives in the **wiki** — start at [docs/wiki/README.md](docs/wi
 
 ---
 
+## Engineering practices
+
+Production-readiness and code quality were first-class, not afterthoughts:
+
+- **CI on every push** — [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs four jobs: **ruff**
+  lint, **pytest** with the ≥70% coverage gate, the **frontend build** (`tsc` + `vite`), and a
+  **`docker compose config`** check that guards the one-command acceptance gate.
+- **Linting & types** — `ruff` across the whole repo (rules E/F/I/UP/B/C4/SIM); full type hints with
+  **Pydantic v2** models for every event / API / config contract; `mypy` configured (strict on the
+  shared `common` package).
+- **Tested** — 171 unit + integration tests at **84% coverage** (gate 70%): edge cases (re-entry, staff,
+  empty store, occlusion), ingest **idempotency**, and an end-to-end replay test. Every test file carries
+  a `# PROMPT` / `# CHANGES MADE` block (AI-engineering trace).
+- **12-factor config** — every setting via environment variables (`pydantic-settings`), all documented in
+  [`.env.example`](.env.example); no hardcoded secrets, hosts, or thresholds.
+- **Observability** — structured JSON request logs (`trace_id`, endpoint, latency, status, event count),
+  a Prometheus `/metrics` endpoint, and Grafana dashboards.
+- **Resilient API** — idempotent ingest (safe replays), partial-success batches, and graceful DB-down →
+  structured **503** (no leaked stack traces).
+- **One-command stack** — `docker compose up` builds every service from scratch with healthchecks and
+  startup ordering; CPU-only images, pinned dependencies.
+
+---
+
 ## Status
 
 🟢 **All phases complete** — `docker compose up --build` runs the full stack with one command; the
 replayer feeds pre-generated events into the API, which serves health, metrics, funnel, heatmap,
 and anomaly endpoints (computed from real data, never hardcoded). The **live React dashboard**
-(Part E) is up at http://localhost:8080. Two stores supported (ST1008, ST1009). 138 unit tests,
+(Part E) is up at http://localhost:8080. Two stores supported (ST1008, ST1009). 171 unit + integration tests,
 84% code coverage.
 
 ---
