@@ -55,6 +55,23 @@ class ZoneVerdict:
     source: str = "vlm"
 
 
+@dataclass(frozen=True)
+class DemographicsVerdict:
+    """A coarse demographic prediction for one person crop (ADR-0040).
+
+    `gender` is "M"/"F"/None and `age_bucket` a coarse band/None — both are *predictions* from body,
+    build, hair and clothing (the face is blurred), each with its own self-reported confidence so a
+    hesitant guess can be down-weighted or dropped. They feed event metadata, never a hard count.
+    """
+
+    gender: str | None  # "M" | "F" | None (unknown)
+    gender_confidence: float
+    age_bucket: str | None  # coarse band ("child"/"teen"/"adult"/"senior") | None
+    age_confidence: float
+    reason: str
+    source: str = "vlm"
+
+
 class VLMClient(Protocol):
     """The narrow surface the detector depends on (a real provider client or a test fake)."""
 
@@ -68,6 +85,8 @@ class VLMClient(Protocol):
         candidate_zones: list[str],
         floor_plan_bgr: np.ndarray | None = None,
     ) -> ZoneVerdict: ...
+
+    def classify_demographics(self, image_bgr: np.ndarray) -> DemographicsVerdict: ...
 
 
 # --- Prompts (quoted in CHOICES.md / INTERVIEW_QA.md) ----------------------------------------
@@ -104,6 +123,24 @@ def build_staff_prompt(staff_hint: str | None) -> str:
     if not hint:
         return STAFF_PROMPT
     return f"{STAFF_PROMPT}\n\nStore-specific context: {hint}"
+
+
+DEMOGRAPHICS_PROMPT = (
+    "You are a retail-analytics vision model looking at a "
+    "cropped CCTV image of ONE shopper in a beauty store. "
+    "The FACE IS BLURRED for privacy, so judge ONLY from "
+    "body build, posture, hair, and clothing.\n"
+    "Estimate two COARSE attributes. PREFER 'unknown' with "
+    "low confidence when the crop is occluded, tiny, or "
+    "ambiguous — do not guess.\n"
+    "Respond with ONLY a JSON object exactly like this: "
+    '{"gender": "male" | "female" | "unknown", '
+    '"gender_confidence": <float 0.0-1.0>, '
+    '"age_bucket": "child" | "teen" | "adult" | "senior" '
+    '| "unknown", '
+    '"age_confidence": <float 0.0-1.0>, '
+    '"reason": "<concise reason>"}'
+)
 
 
 def build_zone_prompt(candidate_zones: list[str]) -> str:
@@ -166,6 +203,24 @@ def parse_staff_reply(text: str) -> StaffVerdict:
     return StaffVerdict(
         is_staff=label == "staff",
         confidence=_as_confidence(obj.get("confidence")),
+        reason=str(obj.get("reason", "")).strip()[:200],
+    )
+
+
+_GENDER_MAP = {"male": "M", "m": "M", "female": "F", "f": "F"}
+_AGE_BUCKETS = {"child", "teen", "adult", "senior"}
+
+
+def parse_demographics_reply(text: str) -> DemographicsVerdict:
+    """Turn a raw model reply into a DemographicsVerdict (pure; snaps to known labels else None)."""
+    obj = extract_json(text)
+    gender_raw = str(obj.get("gender", "")).strip().lower()
+    age_raw = str(obj.get("age_bucket", "")).strip().lower()
+    return DemographicsVerdict(
+        gender=_GENDER_MAP.get(gender_raw),
+        gender_confidence=_as_confidence(obj.get("gender_confidence")),
+        age_bucket=age_raw if age_raw in _AGE_BUCKETS else None,
+        age_confidence=_as_confidence(obj.get("age_confidence")),
         reason=str(obj.get("reason", "")).strip()[:200],
     )
 
@@ -236,9 +291,7 @@ class _BaseVLMClient:
     def _generate(self, image_bgr: np.ndarray, prompt: str, *extra_images: np.ndarray) -> str:
         raise NotImplementedError
 
-    def classify_staff(
-        self, image_bgr: np.ndarray, staff_hint: str | None = None
-    ) -> StaffVerdict:
+    def classify_staff(self, image_bgr: np.ndarray, staff_hint: str | None = None) -> StaffVerdict:
         return parse_staff_reply(self._generate(image_bgr, build_staff_prompt(staff_hint)))
 
     def classify_zone(
@@ -250,6 +303,9 @@ class _BaseVLMClient:
         prompt = build_zone_prompt(candidate_zones)
         extra = (floor_plan_bgr,) if floor_plan_bgr is not None else ()
         return parse_zone_reply(self._generate(image_bgr, prompt, *extra), candidate_zones)
+
+    def classify_demographics(self, image_bgr: np.ndarray) -> DemographicsVerdict:
+        return parse_demographics_reply(self._generate(image_bgr, DEMOGRAPHICS_PROMPT))
 
 
 class GeminiVLMClient(_BaseVLMClient):

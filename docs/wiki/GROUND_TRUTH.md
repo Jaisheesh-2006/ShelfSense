@@ -237,15 +237,18 @@ schema**. Three observed shapes:
   `queue_served_ts`(null if abandoned), `queue_exit_ts`, `wait_seconds`, `queue_position_at_join`,
   `abandoned`**, hotspot, demographics.
 
-→ **Decided (ADR-0024 D1 — keep the flat schema):** the PDF's page-5 schema (what we built and what the
-*gate example* uses) is the emitted/ingested contract; the provided sample (richer: demographics, groups,
-zone metadata, queue analytics, hotspots) is **informational only** — it is internally inconsistent and from
-a different sample store, so we document it but do not adopt it. See [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0024.
+→ **Decided (ADR-0024 D1, then ADR-0040 — superset):** the PDF's page-5 flat object stays the emitted/
+ingested top-level contract (gate + schema-compliance reference it). **ADR-0040 (2026-06-04) superseded the
+"informational only" stance:** the sample's richer signals are now adopted as a **`metadata` superset** —
+zone semantics, groups (co-entry), queue analytics, foot-point hotspots, and **VLM-predicted** gender +
+coarse age (faces blurred → predictions with confidence, null where unsure). Merged by `visitor_id` so
+counts are unchanged. See [[EVENT_SCHEMA]] and [[DECISIONS]] ADR-0040.
 
 ## What this implies for us (carried into the rest of the wiki)
 
-- Our emitted schema already matches the PDF's **page-5 Required Output Schema** — the authoritative,
-  gate-referenced one. The richer `sample_events.jsonl` is informational; we kept the flat schema (ADR-0024/D1).
+- Our emitted schema keeps the PDF's **page-5 Required Output Schema** as the flat top-level (authoritative,
+  gate-referenced) and **adds the richer `sample_events.jsonl` fields as a `metadata` superset** (ADR-0040,
+  superseding ADR-0024/D1) — demographics now VLM-predicted, merged by `visitor_id` so counts don't move.
 - **Two stores processed**: the API is per-store; the **detection pipeline processes both stores**
   (Store_1 ST1008 + Store_2 ST1009) via a pluggable store registry (ADR-0028).
 - **POS loader reworked** for the new 7-col CSV — conversion KPIs are live for ST1008; ST1009 has no POS

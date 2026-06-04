@@ -19,6 +19,7 @@ Clips are finite recordings, so the service processes them once and then idles h
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,8 +30,8 @@ from shelfsense_common.contracts import (
     BehaviorEventType,
     CameraConfig,
     CameraRole,
-    EventMetadata,
     StoreConfig,
+    build_event_metadata,
 )
 from shelfsense_common.logging import configure_logging, get_logger
 from shelfsense_common.sinks import EventSink, FanOutSink, HttpEventSink, JsonlEventSink
@@ -84,7 +85,8 @@ def process_camera(
     # far/reflection blobs are dropped by the box-size gate. The entrance thus contributes interior
     # visitors too, not just crossings, without re-admitting the corridor traffic (ADR-0011).
     min_zone_dwell_ms = (
-        store.min_zone_dwell_ms if store.min_zone_dwell_ms is not None
+        store.min_zone_dwell_ms
+        if store.min_zone_dwell_ms is not None
         else settings.min_zone_dwell_ms
     )
     zone_tracker = ZoneTracker(
@@ -129,7 +131,11 @@ def process_camera(
         sig_sums[track_id] = sig if prev is None else prev + sig
         # 2. Heuristic fallback: measure match to the store's staff uniform colour
         color_score = measure_uniform_color(
-            image, x, y, w, h,
+            image,
+            x,
+            y,
+            w,
+            h,
             store.staff_heuristic_color,
             settings.staff_uniform_v_max,
         )
@@ -162,8 +168,11 @@ def process_camera(
             dwell_ms=dwell_ms,
             is_staff=is_staff,
             confidence=confidence,
-            metadata=EventMetadata(
-                session_seq=registry.next_seq(visitor_id), queue_depth=queue_depth
+            metadata=build_event_metadata(
+                event_type=event_type,
+                zone_id=zone_id,
+                session_seq=registry.next_seq(visitor_id),
+                queue_depth=queue_depth,
             ),
         )
         sink.write(event)
@@ -282,9 +291,7 @@ def process_camera(
                     for ze in zone_tracker.observe(local_id, frame.ts_ms, track.confidence):
                         emit_zone(ze)
                 if crossing is not None:
-                    for cross in crossing.update(
-                        local_id, fx, fy, frame.ts_ms, track.confidence
-                    ):
+                    for cross in crossing.update(local_id, fx, fy, frame.ts_ms, track.confidence):
                         emit(
                             cross.track_id,
                             cross.event_type,
@@ -351,13 +358,12 @@ def process_store(
         reid_max_distance = settings.reid_cnn_max_distance
     else:
         reid_max_distance = (
-            store.reid_max_distance if store.reid_max_distance is not None
+            store.reid_max_distance
+            if store.reid_max_distance is not None
             else settings.reid_max_distance
         )
     tracker.imgsz = (
-        store.detector_imgsz
-        if store.detector_imgsz is not None
-        else settings.detector_imgsz
+        store.detector_imgsz if store.detector_imgsz is not None else settings.detector_imgsz
     )
     registry = VisitorRegistry(
         ReIDGallery(
@@ -382,6 +388,7 @@ def process_store(
         override_margin=settings.staff_override_margin,
         log=log,
         crop_dump_dir=settings.staff_crop_dump_dir,
+        classify_demographics=settings.vlm_classify_demographics,
     )
     # Label product-camera zones from the shelves (VLM), falling back to the static primary_zone.
     zone_overrides = resolve_zones(
@@ -437,7 +444,37 @@ def process_store(
                 posted_to_api=http_sink.posted,
             )
     staff.dump_crops()  # no-op unless STAFF_CROP_DUMP_DIR is set (proof/adjudication aid)
+    _harvest_demographics(store, staff, settings, log)
     return totals
+
+
+def _harvest_demographics(store: StoreConfig, staff: StaffDecider, settings: Settings, log) -> None:
+    """Write this store's per-visitor VLM demographics + hotspot to the merge sidecar (ADR-0040).
+
+    No-op unless `vlm_classify_demographics` is on and the VLM produced verdicts. Merges into any
+    existing sidecar (other stores' entries are preserved), keyed `"<store_id>:<visitor_id>"`. The
+    offline enrich transform reads this to fill gender/age/hotspot WITHOUT regenerating events, so
+    the validated counts never change.
+    """
+    if not settings.vlm_classify_demographics:
+        return
+    demographics = staff.demographics_by_visitor()
+    if not demographics:
+        return
+    path = Path(settings.demographics_sidecar_path)
+    merged: dict[str, dict] = {}
+    if path.exists():
+        try:
+            merged = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            merged = {}
+    for visitor_id, record in demographics.items():
+        merged[f"{store.store_id}:{visitor_id}"] = record
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8")
+    log.info(
+        "demographics_harvested", store=store.store_id, visitors=len(demographics), path=str(path)
+    )
 
 
 def run_once(settings: Settings, log) -> dict[str, int]:
@@ -537,6 +574,7 @@ def run_once(settings: Settings, log) -> dict[str, int]:
     )
     return {**totals, "unique_visitors": len(emitted_visitors)}
 
+
 def main() -> None:
     settings = get_settings()
     configure_logging(SERVICE, settings.log_level)
@@ -553,4 +591,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

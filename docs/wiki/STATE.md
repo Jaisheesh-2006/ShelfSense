@@ -57,6 +57,13 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
 
 ## Recent decisions (newest first → see [[DECISIONS]])
 
+- **ADR-0040** event schema = page-5 flat top-level **+ `sample_events.jsonl` superset** under `metadata`
+  (supersedes ADR-0024 D1; user, 2026-06-04): zone semantics, groups (co-entry heuristic), queue analytics,
+  hotspots (foot-point), and **VLM-predicted demographics** — gender + coarse age band (Groq Llama-4 Scout)
+  from body/clothing since faces are blurred, with confidence, null where unsure (exact `age_pred` always
+  null, `is_face_hidden=true`). Demographics harvested per visitor and **merged by `visitor_id`**, so the
+  count-relevant fields are **byte-identical to HEAD** (27/29 visitors, demographics on 265/289 events).
+  171 tests green, coverage 82.8%, ruff clean.
 - **ADR-0039** cross-camera identity — **not feasible on this dataset**, skip + document (user, 2026-06-04):
   Store_2 cams are non-overlapping AND recorded on different real days (no true time-sync), so a homography/
   spatio-temporal merge would *fabricate* identities. Its only payoff (staff +2) is within the accepted
@@ -85,10 +92,11 @@ api · **replayer** · prometheus · grafana · **frontend** (:8080); the detect
 
 ## Open items / next action
 
-**Single next action:** committed `data/events/behavior.jsonl` is **regenerated** with the validated config
-(motion stitching ADR-0037 + histogram Re-ID + ADR-0034/0035, frame-verified ENTRY lines, global imgsz 768)
-— ST1008 106 events / ST1009 183 events, replay E2E green. Next: a clean-machine `docker compose down -v &&
-up --build` gate dry-run.
+**Single next action:** committed `data/events/behavior.jsonl` (ST1008 106 / ST1009 183) now carries the
+**ADR-0040 metadata superset** — zone semantics, `wait_seconds`, co-entry groups, foot-point hotspots, and
+**VLM-predicted gender + coarse age** merged by `visitor_id` (count-relevant fields byte-identical to HEAD;
+replay E2E green). Next: a clean-machine `docker compose down -v && up --build` gate dry-run, then refresh
+the submission zip.
 
 Known limits (documented, not bugs — [[GROUND_TRUTH]] §1, [[EDGE_CASES]], ADR-0036/0037/0038/0039): the
 within-camera **over-split is fixed** by motion association (ADR-0037); what remains is **cross-camera**

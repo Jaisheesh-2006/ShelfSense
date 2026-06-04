@@ -24,7 +24,7 @@ import hashlib
 import numpy as np
 
 from app.staff import StaffClassifier
-from app.vlm import JsonFileCache, StaffVerdict, VLMClient
+from app.vlm import DemographicsVerdict, JsonFileCache, StaffVerdict, VLMClient
 
 
 class StaffDecider:
@@ -43,9 +43,13 @@ class StaffDecider:
         override_margin: float,
         log,
         crop_dump_dir: str = "",
+        classify_demographics: bool = False,
     ) -> None:
         self._heuristic = heuristic
         self._vlm = vlm if classify_staff else None
+        # Demographics use the SAME model but an independent toggle, so a harvest can predict
+        # gender/age with staff-VLM off (ADR-0040) without disturbing the staff classification.
+        self._demographics_vlm = vlm if classify_demographics else None
         self._cache = cache
         self._store_id = store_id
         self._staff_hint = staff_hint
@@ -57,6 +61,8 @@ class StaffDecider:
         self._decision_logged: set[str] = set()  # visitor_ids whose decision we've logged once
         # Largest-area crop seen per (camera, track) — the representative image we send to the VLM.
         self._crops: dict[tuple[str, int], tuple[np.ndarray, float]] = {}
+        # Foot-point of that representative crop (full-frame px) — the demographics hotspot (0040).
+        self._crop_foot: dict[tuple[str, int], tuple[float, float]] = {}
         self._verdicts: dict[str, StaffVerdict] = {}  # by visitor_id
         self._failed: set[str] = set()  # visitor_ids whose VLM call errored this run
         self._track_visitor: dict[tuple[str, int], str] = {}  # (cam,track) -> visitor (for dumps)
@@ -70,8 +76,8 @@ class StaffDecider:
 
     def observe_crop(self, camera_id: str, track_id: int, image: np.ndarray, bbox) -> None:
         """Keep the largest-area person crop per track — best image to show the VLM (or to dump)."""
-        if self._vlm is None and not self._crop_dump_dir:
-            return  # no VLM and no dump → never need crops
+        if self._vlm is None and self._demographics_vlm is None and not self._crop_dump_dir:
+            return  # no VLM (staff or demographics) and no dump → never need crops
         h_img, w_img = image.shape[:2]
         x0, y0 = max(0, int(bbox.x)), max(0, int(bbox.y))
         x1, y1 = min(w_img, int(bbox.x + bbox.w)), min(h_img, int(bbox.y + bbox.h))
@@ -82,6 +88,8 @@ class StaffDecider:
         prev = self._crops.get(key)
         if prev is None or area > prev[1]:
             self._crops[key] = (image[y0:y1, x0:x1].copy(), area)
+            # Foot-point (bottom-centre, full-frame px): the representative hotspot for this person.
+            self._crop_foot[key] = (float(bbox.x + bbox.w / 2.0), float(bbox.y + bbox.h))
 
     # --- decision ----------------------------------------------------------------------------
 
@@ -124,7 +132,9 @@ class StaffDecider:
             return
         self._decision_logged.add(visitor_id)
         self._decisions[visitor_id] = {
-            "score": round(score, 3), "is_staff": decision, "source": source
+            "score": round(score, 3),
+            "is_staff": decision,
+            "source": source,
         }
         self._log.info(
             "staff_decision",
@@ -164,6 +174,81 @@ class StaffDecider:
             name = f"{self._store_id}_{vid}_{label}_c{score:.2f}_{source}.jpg"
             cv2.imwrite(os.path.join(self._crop_dump_dir, name), crop)
         self._log.info("staff_crops_dumped", store=self._store_id, count=len(best))
+
+    def demographics_by_visitor(self) -> dict[str, dict]:
+        """Per-visitor coarse demographics (VLM) + a representative foot-point hotspot (ADR-0040).
+
+        Mirrors `dump_crops`: pick the largest crop per visitor, ask the VLM for gender + age band
+        (cached), and return ``{visitor_id: {gender_pred, age_bucket, confidences, hotspot_x/y}}``.
+        Empty without a demographics VLM. This NEVER affects counts — it only feeds event metadata
+        via the offline merge, so the validated unique/funnel numbers are untouched.
+        """
+        if self._demographics_vlm is None:
+            return {}
+        best: dict[str, tuple[np.ndarray, float, tuple[str, int]]] = {}
+        for (cam, track), (crop, area) in self._crops.items():
+            vid = self._track_visitor.get((cam, track))
+            if vid is None:
+                continue
+            if vid not in best or area > best[vid][1]:
+                best[vid] = (crop, area, (cam, track))
+
+        out: dict[str, dict] = {}
+        for vid, (crop, _area, key) in best.items():
+            verdict = self._demographics_verdict(vid, crop)
+            if verdict is None:
+                continue
+            fx, fy = self._crop_foot.get(key, (None, None))
+            out[vid] = {
+                "gender_pred": verdict.gender,
+                "gender_confidence": round(verdict.gender_confidence, 3),
+                "age_bucket": verdict.age_bucket,
+                "age_confidence": round(verdict.age_confidence, 3),
+                "hotspot_x": round(fx, 1) if fx is not None else None,
+                "hotspot_y": round(fy, 1) if fy is not None else None,
+                "reason": verdict.reason,
+            }
+        return out
+
+    def _demographics_verdict(
+        self, visitor_id: str, crop: np.ndarray
+    ) -> DemographicsVerdict | None:
+        """Cached/fresh demographics verdict for a visitor; None on error (kept out of events)."""
+        cache_key = f"demographics:{self._store_id}:{visitor_id}"
+        cached = self._cache.get(cache_key) if self._cache is not None else None
+        if cached is not None:
+            return DemographicsVerdict(
+                gender=cached.get("gender"),
+                gender_confidence=float(cached.get("gender_confidence", 0.0)),
+                age_bucket=cached.get("age_bucket"),
+                age_confidence=float(cached.get("age_confidence", 0.0)),
+                reason=str(cached.get("reason", "")),
+                source="cache",
+            )
+        try:
+            verdict = self._demographics_vlm.classify_demographics(crop)  # type: ignore[union-attr]
+        except Exception as err:  # noqa: BLE001 — degrade (null demographics), don't crash the pass
+            self._log.warning("vlm_demographics_failed", visitor=visitor_id, error=str(err))
+            return None
+        if self._cache is not None:
+            self._cache.set(
+                cache_key,
+                {
+                    "gender": verdict.gender,
+                    "gender_confidence": verdict.gender_confidence,
+                    "age_bucket": verdict.age_bucket,
+                    "age_confidence": verdict.age_confidence,
+                    "reason": verdict.reason,
+                },
+            )
+        self._log.info(
+            "vlm_demographics",
+            visitor=visitor_id,
+            gender=verdict.gender,
+            age_bucket=verdict.age_bucket,
+            gender_conf=round(verdict.gender_confidence, 3),
+        )
+        return verdict
 
     def _vlm_verdict(
         self, camera_id: str, track_id: int, visitor_id: str | None

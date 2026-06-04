@@ -31,6 +31,35 @@ class CameraRole(StrEnum):
     STOCKROOM = "stockroom"
 
 
+# Rich zone descriptors mirroring the delivered `sample_events.jsonl` (ADR-0040):
+# each canonical zone_id -> (zone_name, zone_type, is_revenue_zone). Derived deterministically from
+# the store's real zones (GROUND_TRUTH §4), never fabricated. These populate EventMetadata's
+# superset zone fields without changing the flat top-level schema.
+_ZONE_DESCRIPTORS: dict[str, tuple[str, str, bool]] = {
+    ZoneName.ENTRANCE: ("Entrance", "ENTRANCE", False),
+    ZoneName.SKINCARE_AISLE: ("Skincare Aisle", "SHELF", True),
+    ZoneName.MAKEUP_AISLE: ("Makeup Aisle", "SHELF", True),
+    ZoneName.FOH_CENTER: ("Front of House", "DISPLAY", True),
+    ZoneName.CHECKOUT: ("Billing Counter Queue", "BILLING", True),
+    ZoneName.ACCESSORIES: ("Accessories", "SHELF", True),
+    ZoneName.STOCKROOM: ("Stockroom", "BACK_OF_HOUSE", False),
+}
+
+
+def zone_descriptor(zone_id: str | None) -> tuple[str | None, str | None, bool | None]:
+    """Return (zone_name, zone_type, is_revenue_zone) for a zone_id (ADR-0040).
+
+    Returns (None, None, None) for a null zone (ENTRY/EXIT carry no zone). Unknown zone_ids fall
+    back to a title-cased name + SHELF/revenue=True, so adding a store needs no change here.
+    """
+    if zone_id is None:
+        return None, None, None
+    descriptor = _ZONE_DESCRIPTORS.get(zone_id)
+    if descriptor is not None:
+        return descriptor
+    return zone_id.replace("_", " ").title(), "SHELF", True
+
+
 class EntranceLine(BaseModel):
     """A virtual line for entry/exit counting, in pixel coords (1920x1080 frame).
 
@@ -125,6 +154,7 @@ class StoreConfig(BaseModel):
     min_zone_dwell_ms: int | None = None
     detector_imgsz: int | None = None
     staff_heuristic_color: str | None = "black"  # e.g., "black", "pink", or None to disable
+
     def camera(self, camera_id: str) -> CameraConfig | None:
         return next((c for c in self.cameras if c.camera_id == camera_id), None)
 

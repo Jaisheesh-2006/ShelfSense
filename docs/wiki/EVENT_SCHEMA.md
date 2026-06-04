@@ -8,12 +8,15 @@
 > envelope design. Low-level detector→tracker data may stay internal, but the **emitted/ingested
 > event is the flat behavioural schema below**.
 >
-> ✅ **DECISION (2026-06-02, user, ADR-0024 D1): keep this flat PDF page-5 schema — it is what the
-> pipeline "must emit".** The corrected dataset added a richer/inconsistent `sample_events.jsonl` (see "The
-> provided sample" below), but the PDF prints this flat object as the **Required Output Schema** and the
-> gate/`assertions` examples use it, so **we emit this and only this**. The sample's extra signals
-> (demographics, groups, zone metadata, queue analytics) are **not adopted** — documented as a deliberate
-> scope choice, not an oversight.
+> ✅ **DECISION (2026-06-04, user, ADR-0040 — supersedes ADR-0024 D1): keep the flat page-5 top-level
+> schema AND carry the delivered `sample_events.jsonl` richer fields as a `metadata` *superset*.** The
+> page-5 flat object stays exactly as the PDF prints it (acceptance gate + Part-A schema-compliance safe);
+> the sample's extra signals (zone semantics, groups, demographics, queue analytics, hotspots) are added
+> under `metadata` — the schema's own extension point — so every event is a strict superset of both
+> schemas. Demographics are **VLM-predicted** (gender + a coarse age band) from body/clothing/hair —
+> the faces are blurred, so they are *predictions* with confidence, left `null` where the model is unsure
+> (`is_face_hidden=true` always; exact `age_pred` stays null). Input-derived, never fabricated. See
+> [[DECISIONS]] ADR-0040.
 
 ## Event object (flat)
 
@@ -32,7 +35,22 @@
   "metadata": {
     "queue_depth": null,                  // int; set for BILLING_QUEUE_JOIN
     "sku_zone": "MOISTURISER",            // finer zone/brand label where known
-    "session_seq": 5                      // ordinal of this event within the visitor session
+    "session_seq": 5,                     // ordinal of this event within the visitor session
+    // --- sample_events.jsonl superset (ADR-0040); derived from real events, never fabricated ---
+    "zone_name": "Makeup Aisle",          // human label for zone_id
+    "zone_type": "SHELF",                 // SHELF | DISPLAY | BILLING | ENTRANCE | BACK_OF_HOUSE
+    "is_revenue_zone": true,              // zone holds sellable product / a till
+    "zone_hotspot_x": null,               // pixel coords are not retained in the event stream
+    "zone_hotspot_y": null,
+    "group_id": null,                     // group entry — null until group detection is enabled
+    "group_size": null,
+    "gender_pred": "F",                   // VLM prediction from body/clothing (face blurred); null if unsure
+    "age_pred": null,                     // exact age not inferable from blurred CCTV -> always null
+    "age_bucket": "adult",                // coarse VLM band (child/teen/adult/senior); null if unsure
+    "is_face_hidden": true,               // our footage is anonymised (full-face blur)
+    "queue_position_at_join": null,       // = queue_depth on BILLING_QUEUE_JOIN
+    "wait_seconds": null,                 // derived at analytics time, not carried on the event
+    "abandoned": null                     // true on BILLING_QUEUE_ABANDON
   }
 }
 ```
@@ -63,7 +81,7 @@ returning shopper produces `REENTRY` under the **same** `visitor_id` —
 never a fresh `ENTRY`. **Unique visitors = distinct `visitor_id`s** (the conversion denominator). See
 [[EDGE_CASES]], [[BUSINESS_RULES]].
 
-## The provided `sample_events.jsonl` (richer — informational only; not adopted)
+## The provided `sample_events.jsonl` (richer — adopted as a `metadata` superset, ADR-0040)
 
 The corrected dataset ships 13 example events ([[GROUND_TRUTH]] §5) from a sample store (`store_1076`,
 Mumbai) "to help you validate your detection layer." Its schema **differs from the flat one above** and is
@@ -84,15 +102,25 @@ timestamps) rather than our `BILLING_QUEUE_JOIN` + derived-`ABANDON` pair.
 explicit groups (`group_id`/`group_size`), zone semantics (`zone_type`/`is_revenue_zone`), spatial
 hotspots, and richer queue analytics (wait time, queue position).
 
-**The decision (ADR-0024 D1) — ✅ RESOLVED: (a) keep the flat page-5 schema.**
-- (a) **Keep the flat page-5 schema** — it's what the PDF prints as "Required" and what the gate example
-  (`GET /stores/STORE_BLR_002/metrics`) and `assertions.py` style imply; lowest risk, already built.
-  **← chosen (user, 2026-06-02): "it's clearly given your pipeline must emit this, so follow page 5 only."**
-- (b) *Adopt the sample's schema* — rejected: messy/inconsistent and a large refactor across
-  contract/ingest/analytics/tests for no scoring gain.
-- (c) *Enrich ours toward it* — rejected for now: the extra signals (demographics, groups, zone metadata,
-  queue analytics) are optional and add risk (e.g. demographics from full-face-blurred footage). Revisit
-  only if a real need appears.
+**The decision — ✅ ADR-0040 (2026-06-04, user): option (c), enrich ours into a superset** (supersedes the
+earlier ADR-0024 D1, which had chosen (a)). We **keep the flat page-5 top-level** and add the sample's
+richer fields under `metadata`:
+- (a) *Keep the flat page-5 schema only* — was the prior choice; superseded. The top-level is still page-5
+  (gate + schema-compliance safe), but `metadata` now carries the sample's signals.
+- (b) *Replace with the sample's exact shapes* — **rejected:** the sample is internally inconsistent (3
+  shapes), drops `ZONE_DWELL`/`REENTRY`/`BILLING_QUEUE_JOIN`, and risks the gate/schema-compliance points.
+- (c) **Enrich ours into a superset** — **chosen.** `zone_name`/`zone_type`/`is_revenue_zone`/hotspots,
+  `group_id`/`group_size`, demographics, and queue analytics are added under `metadata`. How each is filled
+  HONESTLY (no fabrication):
+  - **Zone descriptors** — derived deterministically from `zone_id` (`zone_descriptor`, `contracts/zones.py`).
+  - **`wait_seconds`** — the visitor's real checkout-zone dwell; **`queue_position_at_join`** = `queue_depth`.
+  - **`group_id`/`group_size`** — co-entry heuristic (ENTRY crossings within 4 s ⇒ one arriving group).
+  - **`zone_hotspot_x/y`** — the visitor's representative foot-point (pixel coords) on a zone event.
+  - **`gender_pred` + `age_bucket`** — a **VLM prediction** (Groq Llama-4 Scout) from body/clothing/hair,
+    with confidence, `null` where unsure; exact `age_pred` stays null (not inferable from blurred faces),
+    `is_face_hidden=true`. Harvested per visitor and **merged by `visitor_id`** into the committed events
+    (`scripts/enrich_events_schema.py` + a sidecar) so the validated counts never change.
+  One helper (`build_event_metadata`) gives the detector and the offline transform identical metadata.
 
 ## Status
 Prescribed schema adopted (ADR-0005) and **implemented** as `BehaviorEvent` in
@@ -105,6 +133,9 @@ optional VLM, ADR-0009/0032/0027) + `visitor_id` made stable within a camera by 
 enforce a tz-aware UTC timestamp and `zone_id=None` for ENTRY/EXIT.
 
 **Ingested + persisted (Slice 2.6, ADR-0013):** `POST /events/ingest` validates each event against this
-model and stores it in the `behavior_events` table keyed by `event_id` (idempotent dedup). `metadata`
-is flattened on persistence to the columns the metrics need (`queue_depth`); the other flat fields map
-1:1. Metrics/funnel are recomputed from these rows on read (`shelfsense_common/analytics.py`).
+model (including the ADR-0040 superset `metadata`) and stores it in the `behavior_events` table keyed by
+`event_id` (idempotent dedup). `metadata` is flattened on persistence to the columns the metrics need
+(`queue_depth`); the superset fields travel on the **emitted event + ingest contract** (what reviewers
+inspect in `data/events/behavior.jsonl`) — they are not promoted to columns because no read endpoint needs
+them and the metrics compute from the persisted columns. The other flat fields map 1:1. Metrics/funnel are
+recomputed from these rows on read (`shelfsense_common/analytics.py`).

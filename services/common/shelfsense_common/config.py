@@ -170,6 +170,9 @@ class Settings(BaseSettings):
     vlm_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     vlm_classify_staff: bool = True  # use the VLM for staff/customer (else heuristic only)
     vlm_classify_zone: bool = True  # use the VLM to label camera zones (else static primary_zone)
+    # VLM predicts coarse demographics (gender + age band) per visitor from body/clothing (faces are
+    # blurred) — a prediction with confidence, harvested into the events' metadata (ADR-0040).
+    vlm_classify_demographics: bool = True
     # Staff decision = VLM cross-store BASELINE + per-store colour heuristic high-conf OVERRIDE
     # (ADR-0032). The VLM generalises across stores; where a store has a distinctive uniform, a
     # decisive colour match overrides the VLM. This is how far ABOVE the staff threshold the colour
@@ -187,6 +190,9 @@ class Settings(BaseSettings):
     vlm_zone_min_confidence: float = 0.55
     # Persistent verdict cache: re-runs reuse it, and it can be committed for repeatable replay.
     vlm_cache_path: str = "/data/vlm/vlm_cache.json"
+    # Per-visitor demographics + representative hotspot harvested by the detector (ADR-0040); the
+    # enrich transform merges this into the committed events' metadata so counts never drift.
+    demographics_sidecar_path: str = "/data/vlm/demographics.json"
     vlm_zone_frame_fraction: float = 0.4  # where in the clip to grab the representative zone frame
     vlm_timeout_s: float = 30.0  # per-call timeout
     vlm_max_retries: int = 2  # per-call retries before giving up and falling back

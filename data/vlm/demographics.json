@@ -1,0 +1,245 @@
+{
+  "ST1008:VIS_0001": {
+    "age_bucket": "adult",
+    "age_confidence": 0.6,
+    "gender_confidence": 0.6,
+    "gender_pred": "F",
+    "hotspot_x": 1344.5,
+    "hotspot_y": 1073.5,
+    "reason": "Long hair and adult build."
+  },
+  "ST1008:VIS_0002": {
+    "age_bucket": "adult",
+    "age_confidence": 0.5,
+    "gender_confidence": 0.6,
+    "gender_pred": "F",
+    "hotspot_x": 869.9,
+    "hotspot_y": 1078.9,
+    "reason": "The person's hair style and body build suggest female, and the clothing appears to be typical for an adult."
+  },
+  "ST1008:VIS_0003": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "M",
+    "hotspot_x": 179.4,
+    "hotspot_y": 1068.4,
+    "reason": "The build and clothing style suggest a male adult."
+  },
+  "ST1008:VIS_0004": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "F",
+    "hotspot_x": 1029.9,
+    "hotspot_y": 944.9,
+    "reason": "The shopper's hair is long and styled in a braid, which is often associated with females. The shopper's body build and posture also appear to be more feminine. The age is estimated as adult due to the"
+  },
+  "ST1008:VIS_0005": {
+    "age_bucket": "adult",
+    "age_confidence": 0.6,
+    "gender_confidence": 0.7,
+    "gender_pred": "F",
+    "hotspot_x": 288.9,
+    "hotspot_y": 433.2,
+    "reason": "The person's body build and posture appear to be more feminine, and the clothing style suggests an adult."
+  },
+  "ST1008:VIS_0006": {
+    "age_bucket": null,
+    "age_confidence": 0.2,
+    "gender_confidence": 0.6,
+    "gender_pred": "F",
+    "hotspot_x": 702.7,
+    "hotspot_y": 247.9,
+    "reason": "Silhouette and apparent long hair suggest female, but low confidence in age due to occlusion and lack of clear features."
+  },
+  "ST1008:VIS_0007": {
+    "age_bucket": "adult",
+    "age_confidence": 0.6,
+    "gender_confidence": 0.7,
+    "gender_pred": "F",
+    "hotspot_x": 975.4,
+    "hotspot_y": 1000.4,
+    "reason": "The person's silhouette and clothing suggest a female figure with long hair, and the build appears to be that of an adult."
+  },
+  "ST1009:VIS_0001": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "M",
+    "hotspot_x": 811.8,
+    "hotspot_y": 1079.3,
+    "reason": "short hair, slender build, casual clothing"
+  },
+  "ST1009:VIS_0002": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 791.0,
+    "hotspot_y": 1071.2,
+    "reason": "long hair, female build, adult posture"
+  },
+  "ST1009:VIS_0003": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "F",
+    "hotspot_x": 674.6,
+    "hotspot_y": 1054.0,
+    "reason": "The shopper's hair style, body build, and clothing suggest a female adult."
+  },
+  "ST1009:VIS_0004": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 428.7,
+    "hotspot_y": 841.0,
+    "reason": "The individual has long hair and a slender build, typical of a female. The clothing and posture suggest an adult."
+  },
+  "ST1009:VIS_0005": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 570.9,
+    "hotspot_y": 721.6,
+    "reason": "The shopper has long hair, is wearing a blouse and has a build and posture consistent with an adult woman."
+  },
+  "ST1009:VIS_0006": {
+    "age_bucket": "adult",
+    "age_confidence": 0.9,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 397.2,
+    "hotspot_y": 1074.9,
+    "reason": "long hair, body build, and dress style suggest an adult female"
+  },
+  "ST1009:VIS_0007": {
+    "age_bucket": "teen",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 361.7,
+    "hotspot_y": 1076.5,
+    "reason": "The person's body build, posture, hair length and style, and clothing suggest they are likely a female teenager."
+  },
+  "ST1009:VIS_0008": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 434.3,
+    "hotspot_y": 1075.8,
+    "reason": "long hair, female clothing, and jewelry"
+  },
+  "ST1009:VIS_0009": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 136.7,
+    "hotspot_y": 1075.0,
+    "reason": "The individual's body build, posture, hair length, and clothing style suggest a female adult. The dress and shoes appear to be more aligned with women's fashion, and the hair length is consistent with"
+  },
+  "ST1009:VIS_0011": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "F",
+    "hotspot_x": 574.3,
+    "hotspot_y": 1065.6,
+    "reason": "Clothing style, hair length, and posture suggest a female adult."
+  },
+  "ST1009:VIS_0012": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 621.8,
+    "hotspot_y": 600.4,
+    "reason": "The shopper has long hair and a dress, suggesting female gender. The body build and posture are consistent with an adult woman."
+  },
+  "ST1009:VIS_0013": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 325.6,
+    "hotspot_y": 1076.8,
+    "reason": "The individual has long hair in a ponytail, which is often associated with females, and is wearing a red jacket and black pants, which doesn't indicate a specific age but appears to be adult clothing."
+  },
+  "ST1009:VIS_0014": {
+    "age_bucket": "adult",
+    "age_confidence": 0.7,
+    "gender_confidence": 0.8,
+    "gender_pred": "F",
+    "hotspot_x": 623.0,
+    "hotspot_y": 1065.8,
+    "reason": "Analysis based on body build, posture, hair, and clothing."
+  },
+  "ST1009:VIS_0015": {
+    "age_bucket": "adult",
+    "age_confidence": 0.6,
+    "gender_confidence": 0.8,
+    "gender_pred": "F",
+    "hotspot_x": 249.2,
+    "hotspot_y": 1079.2,
+    "reason": "Clothing, hairstyle, and body build suggest female and adult."
+  },
+  "ST1009:VIS_0016": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 784.0,
+    "hotspot_y": 1076.4,
+    "reason": "The person appears to be a woman with long dark hair, wearing a dress, which suggests a female gender. The build and posture suggest an adult."
+  },
+  "ST1009:VIS_0018": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 821.4,
+    "hotspot_y": 1079.7,
+    "reason": "The individual has long dark hair and is wearing a red shirt, with a build and posture that is consistent with an adult female."
+  },
+  "ST1009:VIS_0019": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 317.0,
+    "hotspot_y": 593.7,
+    "reason": "slender build, long hair, wearing a dress"
+  },
+  "ST1009:VIS_0020": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 258.8,
+    "hotspot_y": 1049.7,
+    "reason": "long hair, body build, and clothing suggest a female adult"
+  },
+  "ST1009:VIS_0021": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.9,
+    "gender_pred": "F",
+    "hotspot_x": 767.2,
+    "hotspot_y": 1073.1,
+    "reason": "The person's long hair and body build suggest female; the clothing and posture suggest an adult."
+  },
+  "ST1009:VIS_0022": {
+    "age_bucket": "adult",
+    "age_confidence": 0.8,
+    "gender_confidence": 0.7,
+    "gender_pred": "F",
+    "hotspot_x": 268.0,
+    "hotspot_y": 1079.3,
+    "reason": "Hair style and body build suggest female; posture and proportions suggest adult"
+  }
+}

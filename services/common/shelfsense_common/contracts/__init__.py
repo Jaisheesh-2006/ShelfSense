@@ -4,6 +4,7 @@ from shelfsense_common.contracts.behavior import (
     BehaviorEvent,
     BehaviorEventType,
     EventMetadata,
+    build_event_metadata,
 )
 from shelfsense_common.contracts.events import (
     SCHEMA_VERSION,
@@ -28,6 +29,7 @@ from shelfsense_common.contracts.zones import (
     FloorRegion,
     StoreConfig,
     ZoneName,
+    zone_descriptor,
 )
 
 __all__ = [
@@ -35,6 +37,7 @@ __all__ = [
     "BehaviorEvent",
     "BehaviorEventType",
     "EventMetadata",
+    "build_event_metadata",
     "Transaction",
     "Event",
     "EventType",
@@ -54,4 +57,5 @@ __all__ = [
     "FloorRegion",
     "CameraConfig",
     "StoreConfig",
+    "zone_descriptor",
 ]

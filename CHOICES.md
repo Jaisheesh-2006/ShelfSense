@@ -48,13 +48,15 @@ Translating raw computer vision outputs (bounding boxes, track IDs, frame coordi
 The AI initially suggested a rich, low-level event envelope containing track updates and bounding box coordinates to support internal debugging and tracing.
 
 ### Final Decision
-A **behavioral event stream** adhering strictly to a flat, predefined schema.
+A **behavioral event stream** on a flat, predefined top-level schema, later extended into a **superset** that also carries the sample file's richer fields (zone, group, demographics, queue, hotspot) under `metadata`.
 
 ### Why
-I rejected the AI's complex envelope. Behavioral events represent the exact abstraction altitude needed by the analytics layer. They compress the data stream exponentially, abstract away pixels and tracking logic from the database, and map directly to the required business metrics (conversion, dwell, queue depth). This strict separation of concerns means the CV pipeline and the analytical API can evolve independently.
+I rejected the AI's complex envelope. Behavioral events sit at the exact abstraction the analytics layer needs: they compress the stream, keep pixels and tracking out of the database, and map straight to the business metrics (conversion, dwell, queue depth) — so the CV pipeline and the API can evolve independently.
+
+When a richer `sample_events.jsonl` arrived, I made the schema a **strict superset** instead of replacing the flat object: the top-level stays the gate-referenced *Required Output Schema*, and the extra fields go under `metadata`. Each is filled from a real signal — zones from `zone_id`, `wait_seconds` from dwell, groups from co-entry, hotspots from the foot-point. Gender and age come from a confidence-tagged **VLM prediction** (faces are blurred), merged by `visitor_id` so the counts never move and nothing is fabricated.
 
 ### Trade-offs Accepted
-Loss of low-level diagnostic richness in the database. Debugging tracking failures requires re-running the CV pipeline against raw video clips rather than simply querying the database.
+Loss of low-level diagnostic richness in the database — debugging tracking needs the raw clips, not a query. A few superset fields are honestly null (exact age, the odd un-harvested visitor), and the demographics are coarse predictions on blurred CCTV — acceptable because they are confidence-tagged and never feed a count.
 
 ### When I Would Revisit This Decision
 If the product required a forensics or audit feature (e.g., visualizing shopper paths on a dashboard), I would introduce an internal debug stream alongside the behavioral events, rather than polluting the core analytics schema.

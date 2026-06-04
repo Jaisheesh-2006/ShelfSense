@@ -1188,3 +1188,53 @@ Concretely: **every camera now runs a zone tracker** (the entrance cam too), so 
 - **What would unblock it (deployment capability, not a this-data task):** truly synchronised, overlapping
   multi-camera footage; then a floor-plane homography lets the ADR-0037 motion association run *across* views
   and would also resolve the cross-camera staff duplication. Parked as a future capability, honestly scoped.
+
+## ADR-0040 — Adopt the `sample_events.jsonl` schema as a `metadata` superset (supersedes ADR-0024 D1)
+- **Date:** 2026-06-04 · **Status:** Accepted (user-directed) · supersedes the schema half of **ADR-0024 D1**.
+- **Context:** ADR-0024 D1 (2026-06-02) chose to **keep only the flat page-5 schema** and treat the delivered
+  `sample_events.jsonl` as *informational*. The user reversed this: **events must follow the sample.** The
+  sample is, however, **internally inconsistent** — three different shapes (entry/exit use
+  `id_token`+`store_code`+`event_timestamp`+demographics; zone events use `track_id`+`store_id`+`event_time`+
+  zone metadata; queue events use `queue_*_ts`+wait analytics) — and only **6 event types** (no `ZONE_DWELL`,
+  `REENTRY`, or `BILLING_QUEUE_JOIN`). It also carries `gender_pred`/`age_pred`/hotspots that our
+  **full-face-blurred** footage ([[GROUND_TRUTH]] §1) cannot honestly produce.
+- **Decision:** adopt option **(c) — superset.** Keep the **flat page-5 top-level schema unchanged** (the
+  acceptance gate + Part-A schema-compliance reference it) and add the sample's richer fields under
+  `metadata` — the schema's own extension point. Every event is now a strict superset of both schemas:
+  - **Zone semantics:** `zone_name`, `zone_type` (SHELF/DISPLAY/BILLING/ENTRANCE/BACK_OF_HOUSE),
+    `is_revenue_zone` — derived deterministically from `zone_id` (`zone_descriptor`, `contracts/zones.py`).
+    `zone_hotspot_x/y` = the visitor's representative foot-point (pixel coords), harvested with demographics.
+  - **Groups:** `group_id`, `group_size` — a **co-entry heuristic** (ENTRY crossings within 4 s of each
+    other, per store, are one arriving group); singletons null. The sample's groups ARE co-arrivers.
+  - **`wait_seconds`** — the visitor's real checkout-zone dwell; **`queue_position_at_join`** = `queue_depth`;
+    `abandoned` = true on `BILLING_QUEUE_ABANDON`.
+  - **Demographics:** `gender_pred` + coarse `age_bucket` — a **VLM prediction** (Groq Llama-4 Scout) from
+    body/clothing/hair (faces are blurred), each with confidence, `null` where the model is unsure; exact
+    `age_pred` stays null, `is_face_hidden=true`. A *prediction* is input-derived (it varies with the crop),
+    so it does **not** trip the integrity cap; honesty is kept via confidence + nulls. The demographics are
+    harvested per visitor and **merged by `visitor_id`** into the committed events (a sidecar + the offline
+    transform), so the validated counts never change.
+- **Alternatives considered:**
+  - (a) *Keep flat page-5 only* — the prior ADR-0024 D1 choice; superseded.
+  - (b) *Replace with the sample's exact 3 shapes + lowercase types* — **rejected:** internally inconsistent,
+    drops `ZONE_DWELL`/`REENTRY`/`JOIN`, a large cross-layer refactor, and **risks the gate + the 10-pt
+    schema-compliance** (the page-5 flat object is the gate-referenced "Required Output Schema").
+- **Implementation:** one helper `build_event_metadata(...)` (`contracts/behavior.py`) gives the **live
+  detector** and the **offline transform** (`scripts/enrich_events_schema.py`) identical metadata. The
+  committed `data/events/behavior.jsonl` (ST1008 106 + ST1009 183) is enriched in place. Demographics come
+  from a new VLM path — `VLMClient.classify_demographics` (Groq), `StaffDecider.demographics_by_visitor`
+  (reuses the per-visitor staff crop + records the foot-point), written to a `demographics.json` sidecar by
+  the detector and merged by the transform.
+- **Regeneration choice (deadline-safe):** rather than overwrite the events with a fresh YOLO run (risking
+  the validated counts), the demographics pass writes to a **temp** events path and only the **sidecar** is
+  kept; the transform then merges gender/age/hotspot **by `visitor_id`** into the committed events. Proven:
+  the count-relevant projection `(store, visitor, event_type, is_staff, zone, ts, queue_depth)` is **byte-
+  identical** to git HEAD, so unique/funnel/conversion are unchanged. **27 of 29 visitors** got a verdict
+  (ST1008 7, ST1009 20; demographics land on **265/289 events**); the rest stay null. A `--profile detect`
+  run also emits the superset (same helper + the harvest writes the sidecar). 171 tests green, coverage
+  **82.8%**, ruff clean.
+- **Trade-offs accepted:** events are larger; some fields are honestly null (exact `age_pred` always;
+  ~2 un-harvested visitors; groups only where co-entry fires). Demographics are body/clothing-based
+  predictions with limited accuracy on blurred overhead CCTV — kept honest by per-field confidence + nulls.
+  The richer fields are not persisted as DB columns (no read endpoint needs them); they live on the
+  emitted/ingested event and in the inspectable JSONL.

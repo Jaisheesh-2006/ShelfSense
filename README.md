@@ -50,6 +50,18 @@ That starts everything. The detector **replays pre-generated events** from
 `data/events/behavior.jsonl` into the API — data appears on the dashboard within seconds, no
 YOLO model, CCTV clips, or VLM keys required. This is done to make it easy for reviewers to run and test the system without heavy dependencies or datal setup. To run the full detection pipeline on real CCTV clips, see the next section.
 
+> **Running from the source zip (no Docker)?** The submission ships **source only** — no virtual
+> environment, `node_modules`, or model weights are included. The Docker path above needs nothing
+> pre-installed. But to run anything **directly** from the source (the tests or the detection
+> pipeline outside Docker), first install the Python requirements:
+>
+> ```bash
+> pip install ./services/common -r services/api/requirements.txt \
+>             -r services/detector/requirements.txt -r requirements-dev.txt
+> ```
+>
+> (Python 3.11+. The frontend, if run outside Docker, needs `npm install` in `frontend/`.)
+
 | What                        | URL                           |
 | --------------------------- | ----------------------------- |
 | **Live dashboard**          | **http://localhost:8080**     |
@@ -95,7 +107,7 @@ To re-run the full YOLO + ByteTrack detection over CCTV clips:
 ```bash
 pip install ./services/common -r services/api/requirements.txt \
             -r services/detector/requirements.txt -r requirements-dev.txt
-pytest          # 171 tests; enforces ≥70% coverage (SPEC Part C) — currently 84%
+pytest          # 188 tests; enforces ≥70% coverage (SPEC Part C) — currently 83%
 ```
 
 The unit + integration suites (edge cases, ingest idempotency, end-to-end event replay) run
@@ -170,7 +182,7 @@ Production-readiness and code quality were first-class, not afterthoughts:
 - **Linting & types** — `ruff` across the whole repo (rules E/F/I/UP/B/C4/SIM); full type hints with
   **Pydantic v2** models for every event / API / config contract; `mypy` configured (strict on the
   shared `common` package).
-- **Tested** — 171 unit + integration tests at **84% coverage** (gate 70%): edge cases (re-entry, staff,
+- **Tested** — 188 unit + integration tests at **83% coverage** (gate 70%): edge cases (re-entry, staff,
   empty store, occlusion), ingest **idempotency**, and an end-to-end replay test. Every test file carries
   a `# PROMPT` / `# CHANGES MADE` block (AI-engineering trace).
 - **12-factor config** — every setting via environment variables (`pydantic-settings`), all documented in
@@ -189,8 +201,8 @@ Production-readiness and code quality were first-class, not afterthoughts:
 🟢 **All phases complete** — `docker compose up --build` runs the full stack with one command; the
 replayer feeds pre-generated events into the API, which serves health, metrics, funnel, heatmap,
 and anomaly endpoints (computed from real data, never hardcoded). The **live React dashboard**
-(Part E) is up at http://localhost:8080. Two stores supported (ST1008, ST1009). 171 unit + integration tests,
-84% code coverage.
+(Part E) is up at http://localhost:8080. Two stores supported (ST1008, ST1009). 188 unit + integration tests,
+83% code coverage.
 
 ---
 

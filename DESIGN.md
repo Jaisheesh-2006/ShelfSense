@@ -29,6 +29,7 @@ behavioral events ──(JSONL + HTTP POST)──► Intelligence API ──► 
 - **Staff** are excluded from the denominator via uniform-based classification, not dwell time.
 - **Zones** map each camera view to a floor-plan region (checkout, skincare aisle, …).
 - **Metrics are read-time** over the latest events; minor ingest lag is tolerated.
+- **Demographics are VLM-predicted, not assumed** (`gender_pred` + coarse `age_bucket`, each with confidence): the faces are blurred, so a VLM (Groq Llama-4 Scout) infers them from body/clothing/hair — left `null` where unsure, exact age never guessed (`is_face_hidden=true`). A prediction varies with the input crop, so it stays within the integrity rule; it is harvested per visitor and merged by `visitor_id` so the validated counts don't move (ADR-0040).
 
 ## Detection Layer
 
@@ -48,6 +49,7 @@ behavioral events ──(JSONL + HTTP POST)──► Intelligence API ──► 
 ## Event Model
 
 - **Semantic events, not raw boxes:** emitting `ZONE_DWELL` and friends shrinks the data stream by orders of magnitude, keeps video PII out of storage, and simplifies analytics.
+- **Page-5 schema + a `sample_events.jsonl` superset (ADR-0040):** the flat top-level stays exactly the PDF's *Required Output Schema* (acceptance-gate + schema-compliance safe), and `metadata` is extended with the delivered sample's richer fields — zone semantics (`zone_name`/`zone_type`/`is_revenue_zone`), groups (`group_id`/`group_size`), demographics, queue analytics, hotspots — so every event is a strict superset of both. Each is filled from a real signal: zone descriptors from `zone_id`, `wait_seconds` from checkout dwell, groups from co-entry, hotspots from the foot-point, and gender/age from a VLM prediction merged by `visitor_id` (counts unchanged). One helper (`build_event_metadata`) backs both the live detector and the offline transform.
 - **Replay-friendly:** events are appended to JSONL and POSTed, so the API runs on pre-generated events with no CV. Extends cleanly to a broker (Kafka) under high write throughput.
 
 ## Intelligence Layer
